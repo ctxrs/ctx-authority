@@ -26,3 +26,15 @@ The test suite should use:
 - deterministic filesystem temp dirs
 
 The default test suite should be offline.
+
+## Build and test reliability
+
+- Bazel wrapper targets should resolve the workspace root in normal shell usage
+  and under Bazel runfiles.
+- Cargo build output must stay outside the repository through `.cargo/config.toml`
+  and the Bazel wrapper environment.
+- Wrapper scripts should use locked dependencies where Cargo supports it.
+- The CLI smoke test should capture stdout and stderr for each command and scan
+  generated local state for the fake secret sentinel.
+- The leak scan should use high-confidence credential patterns so public docs
+  and fake fixtures do not create noisy failures.
