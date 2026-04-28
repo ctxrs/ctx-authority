@@ -229,7 +229,17 @@ impl Grant {
     }
 
     fn matches_email_send(&self, request: &ActionRequest) -> bool {
-        let Some(to) = request.operation.get("to").and_then(|value| value.as_str()) else {
+        let Some(operation) = request.operation.as_object() else {
+            return false;
+        };
+        if operation
+            .keys()
+            .any(|key| !matches!(key.as_str(), "to" | "subject" | "secret_ref"))
+        {
+            return false;
+        }
+
+        let Some(to) = operation.get("to").and_then(|value| value.as_str()) else {
             return false;
         };
         let Some(domain) = recipient_domain(to) else {
@@ -265,7 +275,7 @@ fn is_safe_http_path(path: &str) -> bool {
 
     let mut current = path.to_owned();
     for _ in 0..4 {
-        if has_dot_segment_or_backslash(&current) {
+        if has_unsafe_http_path_chars_or_segments(&current) {
             return false;
         }
 
@@ -278,15 +288,16 @@ fn is_safe_http_path(path: &str) -> bool {
         current = decoded;
     }
 
-    !current.contains('%') && !has_dot_segment_or_backslash(&current)
+    !current.contains('%') && !has_unsafe_http_path_chars_or_segments(&current)
 }
 
 fn is_safe_http_path_prefix(path: &str) -> bool {
     is_safe_http_path(path) && path != "/" && !path.ends_with('/')
 }
 
-fn has_dot_segment_or_backslash(path: &str) -> bool {
-    path.contains('\\')
+fn has_unsafe_http_path_chars_or_segments(path: &str) -> bool {
+    path.bytes()
+        .any(|byte| byte.is_ascii_control() || matches!(byte, b'\\' | b'?' | b'#'))
         || path
             .split('/')
             .any(|segment| segment == "." || segment == "..")
@@ -550,6 +561,18 @@ grants:
             r"/repos/example/repo/issues\..\settings",
             prefix
         ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/1?admin=true",
+            prefix
+        ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/1%3fadmin=true",
+            prefix
+        ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/1#fragment",
+            prefix
+        ));
         assert!(!path_matches_prefix("repos/example/repo/issues/1", prefix));
     }
 
@@ -604,6 +627,8 @@ grants:
         mismatched.operation = json!({"to": "external@example.net"});
         let mut multi_recipient = matching.clone();
         multi_recipient.operation = json!({"to": "attacker@evil.test, external@example.com"});
+        let mut cc_recipient = matching.clone();
+        cc_recipient.operation = json!({"to": "external@example.com", "cc": "attacker@evil.test"});
 
         assert_eq!(
             policy.evaluate(&matching).unwrap().decision,
@@ -615,6 +640,10 @@ grants:
         );
         assert_eq!(
             policy.evaluate(&multi_recipient).unwrap().decision,
+            PolicyDecisionKind::Deny
+        );
+        assert_eq!(
+            policy.evaluate(&cc_recipient).unwrap().decision,
             PolicyDecisionKind::Deny
         );
     }

@@ -167,6 +167,46 @@ fn policy_check_denies_dot_segment_paths() {
 }
 
 #[test]
+fn policy_check_denies_http_query_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("query-path-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_query_path",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues/1?admin=true"
+  },
+  "payload": {}
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_denies_encoded_dot_segment_paths() {
     let temp = tempfile::tempdir().unwrap();
     let action_path = temp.path().join("encoded-dot-segment-action.json");
@@ -580,6 +620,48 @@ fn policy_check_denies_multi_recipient_email_strings() {
   "resource": "fake-mailgun",
   "operation": {
     "to": "attacker@evil.test, external@example.com",
+    "subject": "Demo approval"
+  },
+  "payload": {
+    "body": "Approval-bound test payload"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("approval-required-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
+fn policy_check_denies_email_cc_and_bcc_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("cc-email-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_cc_email",
+  "agent_id": "demo",
+  "capability": "email.send",
+  "resource": "fake-mailgun",
+  "operation": {
+    "to": "external@example.com",
+    "cc": "attacker@evil.test",
     "subject": "Demo approval"
   },
   "payload": {

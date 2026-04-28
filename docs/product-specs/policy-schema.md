@@ -79,9 +79,10 @@ later, but omitted HTTP dimensions must not act as implicit wildcards.
 
 For v1, `email.send` grants are invalid unless `recipient_domains` is present
 and non-empty. Recipient matching is exact and case-insensitive on the domain
-portion of a single bare `operation.to` email address. Display-name syntax,
-subdomain wildcards, and multi-recipient payloads are future schema work and
-must deny in v1.
+portion of a single bare `operation.to` email address. `email.send` operation
+objects may contain only `to`, `subject`, and `secret_ref`; display-name syntax,
+cc/bcc fields, subdomain wildcards, and multi-recipient payloads are future
+schema work and must deny in v1.
 
 HTTP path constraints must be safe to compare without relying on provider
 normalization:
@@ -92,7 +93,8 @@ normalization:
 - Path prefixes and requested paths must not contain `.` or `..` segments.
 - Percent-encoded dot segments such as `%2e%2e` and double-encoded variants are
   unsafe and must deny or fail validation.
-- Backslashes are invalid in HTTP paths.
+- Backslashes, query strings, fragments, and control characters are invalid in
+  HTTP paths until the schema models them explicitly.
 - Prefix matching is exact or subtree-only: `/issues` matches `/issues/1`, but
   not `/issues-admin`.
 
