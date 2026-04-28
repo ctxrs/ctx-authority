@@ -1,0 +1,6 @@
+[build]
+target-dir = "/Volumes/ctx-cache/authority-broker/target"
+rustc-wrapper = "/opt/homebrew/bin/sccache"
+
+[env]
+SCCACHE_DIR = "/Volumes/ctx-cache/authority-broker/sccache"
