@@ -13,11 +13,22 @@ Request capabilities, not secrets.
 ## Common commands
 
 ```bash
-ctxa action request --agent <agent-id> --file <action.json>
-ctxa policy check --agent <agent-id> --file <action.json>
+ctxa action request --policy <policy.yaml> --file <action.json>
+ctxa policy check --policy <policy.yaml> --file <action.json>
 ctxa log
 ctxa receipts verify <receipt.json>
+ctxa mcp serve
 ```
+
+## MCP tools
+
+When connected through MCP, use `capabilities.list` to inspect the currently
+available local tools.
+
+Use `receipts.verify` to check receipt shape through MCP. Pass either a receipt
+object as `receipt` or a JSON string as `receipt_json`. This MCP tool currently
+checks that the receipt parses and has a supported non-empty ed25519 signature
+envelope; it does not yet perform key-based signature verification.
 
 ## Decision handling
 
