@@ -207,7 +207,9 @@ fn log(limit: usize) -> anyhow::Result<()> {
 fn mcp(command: McpCommand) -> anyhow::Result<()> {
     match command {
         McpCommand::Serve => {
-            println!("MCP server is planned for this milestone");
+            let stdin = std::io::stdin();
+            let mut stdout = std::io::stdout();
+            authority_broker::mcp::serve_stdio(stdin.lock(), &mut stdout)?;
             Ok(())
         }
     }
