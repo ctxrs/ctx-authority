@@ -45,4 +45,5 @@ The MVP is ready when:
 - receipt verifies offline.
 - tampered receipt fails verification.
 - raw fake secret value does not appear in logs, receipts, stdout, or stderr.
-- MCP smoke test can perform the same flow.
+- MCP smoke tests cover implemented metadata and receipt-shape tools; MCP action
+  execution is a planned follow-up.

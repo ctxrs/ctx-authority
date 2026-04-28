@@ -4,7 +4,7 @@ use crate::backends::SecretBackend;
 use crate::models::{ActionRequest, PolicyDecisionKind, Receipt};
 use crate::policy::PolicyDocument;
 use crate::providers::ProviderAdapter;
-use crate::receipts::{payload_hash, ReceiptSigner};
+use crate::receipts::{action_hash, ReceiptSigner};
 use crate::{AuthorityError, Result};
 use serde_json::json;
 
@@ -19,11 +19,11 @@ pub struct BrokerRuntime<'a> {
 
 impl<'a> BrokerRuntime<'a> {
     pub fn execute(&self, request: &ActionRequest) -> Result<Receipt> {
-        let payload_hash = payload_hash(&request.payload)?;
+        let payload_hash = action_hash(request)?;
         if let Some(provided_hash) = &request.payload_hash {
             if provided_hash != &payload_hash {
                 return Err(AuthorityError::Config(
-                    "payload_hash does not match canonical payload".into(),
+                    "payload_hash does not match canonical action".into(),
                 ));
             }
         }
@@ -70,7 +70,29 @@ impl<'a> BrokerRuntime<'a> {
             }
             None => None,
         };
-        let execution = self.provider.execute(request, secret.as_ref())?;
+        self.audit.record(
+            "execution_attempted",
+            &json!({
+                "action_request_id": request.id,
+                "provider": request.resource,
+                "capability": request.capability,
+            }),
+        )?;
+        let execution = match self.provider.execute(request, secret.as_ref()) {
+            Ok(execution) => execution,
+            Err(err) => {
+                self.audit.record(
+                    "execution_failed",
+                    &json!({
+                        "action_request_id": request.id,
+                        "provider": request.resource,
+                        "capability": request.capability,
+                        "error": "provider execution failed",
+                    }),
+                )?;
+                return Err(err);
+            }
+        };
         let receipt = self.signer.issue(
             "local".into(),
             request,

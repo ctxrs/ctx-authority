@@ -16,7 +16,7 @@ not want to expose durable raw secrets to the agent.
 3. User configures a secret backend.
 4. User configures provider resources.
 5. User writes policy.
-6. Agent requests an action through CLI or MCP.
+6. Agent requests an action through CLI.
 7. Broker evaluates policy.
 8. Broker denies, allows, or requests approval.
 9. Broker executes through provider adapter if allowed.
@@ -30,13 +30,16 @@ Candidate commands:
 ```bash
 ctxa init
 ctxa agent create demo
-ctxa policy check --agent demo --file action.json
-ctxa action request --agent demo --file action.json
-ctxa approve
+ctxa policy check --policy policy.yaml --file action.json
+ctxa action request --policy policy.yaml --file action.json
+ctxa action request --policy policy.yaml --file risky-action.json --approval approve
 ctxa log
 ctxa receipts verify receipt.json
 ctxa mcp serve
 ```
+
+The current MCP server exposes metadata and structural receipt verification.
+MCP action execution and approval polling are planned follow-ups.
 
 ## Closed-system demo
 
@@ -50,6 +53,15 @@ The demo must run without internet:
 - fake Mailgun records execution.
 - receipt verifies.
 
+## Current closed-system gate
+
+The current automated gate covers the CLI flow with fake providers, including
+policy allow/deny/approval decisions, explicit test approval, audit records,
+local receipt signature verification, tamper rejection, and fake-secret leak
+checks. MCP coverage is limited to the implemented metadata and receipt-shape
+tools until action execution is added to MCP.
+
 ## Done means
 
-All acceptance tests in the active execution plan pass with fake providers only.
+The current release is publishable when the CLI acceptance tests, MCP metadata
+tests, leak scan, code review, and `bazel test //:full_suite` pass.

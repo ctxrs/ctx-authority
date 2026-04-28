@@ -71,6 +71,15 @@ The design should keep an envelope version so the hosted product can later move
 to JWS, COSE, or W3C-verifiable-credential-compatible formats without breaking
 v1 receipts.
 
+## Action hash
+
+The v1 field name is `payload_hash`, but the value must bind the canonical
+action envelope, not only the free-form payload body. The hash includes the
+action id, agent id, task id, capability, resource, operation, payload,
+idempotency key, and request timestamp. This prevents approvals and receipts
+from being reused across different URLs, recipients, resources, or action ids
+that happen to share the same payload body.
+
 ## Local verification
 
 `ctxa receipts verify receipt.json` verifies the Ed25519 signature against the

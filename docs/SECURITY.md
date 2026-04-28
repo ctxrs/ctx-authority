@@ -9,7 +9,7 @@ Constrain how agents use capabilities without handing them durable credentials.
 - Raw secret redaction.
 - Policy enforcement before provider execution.
 - Approval-bound actions.
-- Payload hash binding.
+- Canonical action-hash binding.
 - Local audit.
 - Offline receipt verification.
 - Fake-provider security tests.

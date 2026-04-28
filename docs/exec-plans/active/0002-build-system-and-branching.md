@@ -69,6 +69,7 @@ The CLI smoke test must exercise:
 - `ctxa agent create`
 - `ctxa policy check`
 - `ctxa action request`
+- `ctxa receipts verify`
 - `ctxa log`
 
 It must fail if the fake secret sentinel `fake-secret-value` appears in command

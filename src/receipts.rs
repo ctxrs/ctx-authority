@@ -125,6 +125,33 @@ impl ReceiptSigner {
     }
 }
 
+#[derive(Serialize)]
+struct ActionHashEnvelope<'a> {
+    id: &'a str,
+    agent_id: &'a str,
+    task_id: &'a Option<String>,
+    capability: &'a str,
+    resource: &'a str,
+    operation: &'a serde_json::Value,
+    payload: &'a serde_json::Value,
+    idempotency_key: &'a Option<String>,
+    requested_at: &'a Option<chrono::DateTime<Utc>>,
+}
+
+pub fn action_hash(request: &ActionRequest) -> Result<String> {
+    payload_hash(&ActionHashEnvelope {
+        id: &request.id,
+        agent_id: &request.agent_id,
+        task_id: &request.task_id,
+        capability: &request.capability,
+        resource: &request.resource,
+        operation: &request.operation,
+        payload: &request.payload,
+        idempotency_key: &request.idempotency_key,
+        requested_at: &request.requested_at,
+    })
+}
+
 fn read_signing_key(paths: &AppPaths) -> Result<SigningKey> {
     tighten_signing_key_permissions(&paths.signing_key)?;
     let encoded = fs::read_to_string(&paths.signing_key)?;

@@ -46,6 +46,9 @@ impl PolicyDocument {
                 self.version, SUPPORTED_POLICY_VERSION
             )));
         }
+        for grant in &self.grants {
+            grant.validate()?;
+        }
         Ok(())
     }
 
@@ -92,6 +95,20 @@ impl PolicyDocument {
 }
 
 impl Grant {
+    fn validate(&self) -> Result<()> {
+        if self.capability == "http.request"
+            && (self.allow.methods.is_empty()
+                || self.allow.hosts.is_empty()
+                || self.allow.path_prefixes.is_empty())
+        {
+            return Err(AuthorityError::Config(format!(
+                "http.request grant {} must specify methods, hosts, and path_prefixes",
+                self.id
+            )));
+        }
+        Ok(())
+    }
+
     fn matches(&self, request: &ActionRequest) -> bool {
         if self.agent != request.agent_id
             || self.capability != request.capability
@@ -215,5 +232,22 @@ grants:
         };
         let err = policy.validate().unwrap_err().to_string();
         assert!(err.contains("unsupported policy version"));
+    }
+
+    #[test]
+    fn rejects_incomplete_http_grants() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "broad".into(),
+                agent: "demo".into(),
+                capability: "http.request".into(),
+                resource: "github".into(),
+                allow: AllowRule::default(),
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("must specify methods, hosts, and path_prefixes"));
     }
 }

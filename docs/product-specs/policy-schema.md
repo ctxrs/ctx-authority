@@ -64,6 +64,9 @@ A grant is safe only when it is specific:
 - optional rate limit
 
 Broad grants should be avoided in examples.
+For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
+`path_prefixes` are all present and non-empty. Explicit wildcards can be added
+later, but omitted HTTP dimensions must not act as implicit wildcards.
 
 ## Default behavior
 

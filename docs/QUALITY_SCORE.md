@@ -10,16 +10,16 @@ Early implementation with SDLC gates.
 
 | Domain | Grade | Notes |
 | --- | --- | --- |
-| CLI | Not started | Command surface drafted only. |
-| Local daemon | Not started | Needs stack decision. |
-| MCP server | Not started | Needs SDK decision. |
-| Policy engine | Not started | YAML schema drafted. |
-| Secret backends | Not started | Backend interface needed. |
-| Provider adapters | Not started | Fake-first contract needed. |
-| Approvals | Not started | CLI/TUI vs local web UI undecided. |
-| Audit log | Not started | SQLite recommended. |
-| Receipts | Not started | JWS/COSE/custom envelope undecided. |
-| Tests | Partial | Unit tests, Bazel wrappers, CLI smoke test, and leak scan are wired. More acceptance coverage is still needed. |
+| CLI | Partial | Core init/agent/policy/action/log/receipt commands implemented. |
+| Local daemon | Not started | Planned after CLI surface stabilizes. |
+| MCP server | Partial | Initialize, ping, tool list, capabilities, and structural receipt verification are implemented. Action execution is planned. |
+| Policy engine | Partial | v1 YAML allow/deny/approval decisions implemented with strict field and version validation. |
+| Secret backends | Partial | Fake, `.env`, OS keychain abstraction, and 1Password adapter are implemented. |
+| Provider adapters | Partial | Fake provider adapter implemented; real adapters are not in v1. |
+| Approvals | Partial | Explicit test approval/rejection and fail-closed default implemented. Human TUI/daemon approval is planned. |
+| Audit log | Partial | SQLite audit implemented for decisions, attempts, successes, and failures. |
+| Receipts | Partial | Canonical JSON plus Ed25519 signing and local verification implemented. |
+| Tests | Partial | Unit tests, integration tests, Bazel wrappers, CLI smoke test, and leak scan are wired. More acceptance coverage is still needed. |
 | Security docs | Draft | Threat model needs implementation detail. |
 | CI | Partial | Public workflow runs Cargo format, Clippy, Cargo tests, and Bazel unit/smoke/leak gates. |
 
@@ -30,7 +30,7 @@ The MVP should not launch until the fake-provider test suite proves:
 - secrets do not leak
 - policies default closed
 - denied actions do not execute
-- approvals bind to payload hash
+- approvals bind to canonical action hash
 - receipts verify offline
 - tampered receipts fail
 

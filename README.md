@@ -16,15 +16,16 @@ agent -> authority-broker -> policy -> approval -> provider -> receipt
 
 ## Status
 
-Pre-implementation planning scaffold. The repository is intentionally structured
-for agent-first implementation: public specs, acceptance criteria, fake
-providers, and closed-system tests should come before real provider accounts.
+Early local MVP implementation. The CLI, fake-provider closed-system tests,
+pluggable secret-backend interface, local audit log, signed receipts, minimal
+MCP metadata server, agent skill, Bazel gates, and leak scan are in place.
+Real provider adapters and hosted services are intentionally not included yet.
 
 ## Target MVP
 
 - CLI binary: `ctxa`
-- Local daemon.
-- MCP server.
+- Local daemon later.
+- Minimal MCP server.
 - Agent-agnostic skill/instruction pack.
 - Local YAML policies.
 - Agent profiles.

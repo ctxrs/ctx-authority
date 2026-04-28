@@ -5,7 +5,7 @@ use authority_broker::backends::FakeBackend;
 use authority_broker::models::{ActionRequest, PolicyDecision, PolicyDecisionKind, Receipt};
 use authority_broker::policy::PolicyDocument;
 use authority_broker::providers::FakeProvider;
-use authority_broker::receipts::ReceiptSigner;
+use authority_broker::receipts::{action_hash, ReceiptSigner};
 use authority_broker::runtime::BrokerRuntime;
 use predicates::prelude::*;
 use std::collections::BTreeMap;
@@ -242,7 +242,7 @@ fn action_request_rejects_mismatched_supplied_payload_hash() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "payload_hash does not match canonical payload",
+            "payload_hash does not match canonical action",
         ));
 }
 
@@ -311,6 +311,40 @@ grants:
         .assert()
         .failure()
         .stderr(predicate::str::contains("unsupported policy version"));
+}
+
+#[test]
+fn policy_check_rejects_incomplete_http_grants() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("broad-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: broad
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow: {}
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "must specify methods, hosts, and path_prefixes",
+        ));
 }
 
 #[test]
@@ -407,4 +441,53 @@ fn runtime_rejects_approval_bound_to_changed_payload() {
 
     let err = runtime.execute(&request).unwrap_err().to_string();
     assert!(err.contains("approval does not match payload or policy"));
+}
+
+#[test]
+fn runtime_action_hash_includes_operation() {
+    let action_text = fs::read_to_string(fixture("demo-action.json")).unwrap();
+    let mut first: ActionRequest = serde_json::from_str(&action_text).unwrap();
+    let mut second = first.clone();
+
+    first.id = "act_one".into();
+    second.id = "act_two".into();
+    second.operation["path"] =
+        serde_json::Value::String("/repos/ctx-rs/authority-broker/issues/2".into());
+
+    assert_ne!(action_hash(&first).unwrap(), action_hash(&second).unwrap());
+}
+
+#[test]
+fn runtime_audits_provider_failures_after_attempt() {
+    let home = tempfile::tempdir().unwrap();
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let policy_text = fs::read_to_string(fixture("demo-policy.yaml")).unwrap();
+    let policy: PolicyDocument = serde_yaml::from_str(&policy_text).unwrap();
+    let action_text = fs::read_to_string(fixture("demo-action.json")).unwrap();
+    let mut request: ActionRequest = serde_json::from_str(&action_text).unwrap();
+    request.operation["force_provider_error"] = serde_json::Value::Bool(true);
+    let approvals = ApprovalProvider::reject();
+    let provider = FakeProvider::new(&request.resource);
+    let backend = FakeBackend::new(BTreeMap::from([(
+        "default".to_string(),
+        "fake-secret-value".to_string(),
+    )]));
+    let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
+    let runtime = BrokerRuntime {
+        policy: &policy,
+        audit: &audit,
+        approvals: &approvals,
+        provider: &provider,
+        secret_backend: Some(&backend),
+        signer: &signer,
+    };
+
+    let err = runtime.execute(&request).unwrap_err().to_string();
+    assert!(err.contains("forced fake provider error"));
+
+    let events = audit.list(20).unwrap();
+    assert!(events
+        .iter()
+        .any(|(_, kind, _)| kind == "execution_attempted"));
+    assert!(events.iter().any(|(_, kind, _)| kind == "execution_failed"));
 }

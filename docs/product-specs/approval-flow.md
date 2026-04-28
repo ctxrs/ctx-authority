@@ -17,7 +17,7 @@ Grant:
 Approval:
 
 - one-off human decision for a specific action request
-- bound to exact payload hash and policy hash/version
+- bound to exact canonical action hash and policy hash/version
 - used for risky, novel, or externally visible actions
 - examples: "send this specific email" or "make this specific purchase request"
 
@@ -29,7 +29,7 @@ The first implementation can use a CLI prompt:
 Agent demo wants to perform email.send through fake-mailgun.
 To: external@example.com
 Subject: Demo
-Payload hash: sha256:...
+Action hash: sha256:...
 
 Approve? [y/N]
 ```
@@ -64,7 +64,7 @@ and approve/reject controls.
 Approval must bind to:
 
 - action request id
-- payload hash
+- canonical action hash
 - policy hash/version
 - approver id
 - expiration time
