@@ -1,0 +1,14 @@
+{
+  "id": "act_approval_required",
+  "agent_id": "demo",
+  "capability": "email.send",
+  "resource": "fake-mailgun",
+  "operation": {
+    "to": "external@example.com",
+    "subject": "Demo approval"
+  },
+  "payload": {
+    "body": "Approval-bound test payload"
+  },
+  "idempotency_key": "idem_approval_required"
+}

@@ -3,9 +3,10 @@ use crate::Result;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ApprovalMode {
     AutoApproveForTests,
+    MismatchedPayloadForTests,
     Reject,
 }
 
@@ -27,6 +28,12 @@ impl ApprovalProvider {
         }
     }
 
+    pub fn mismatched_payload_for_tests() -> Self {
+        Self {
+            mode: ApprovalMode::MismatchedPayloadForTests,
+        }
+    }
+
     pub fn request(
         &self,
         action: &ActionRequest,
@@ -34,12 +41,16 @@ impl ApprovalProvider {
         policy_hash: String,
     ) -> Result<Option<ApprovalRecord>> {
         match self.mode {
-            ApprovalMode::AutoApproveForTests => {
+            ApprovalMode::AutoApproveForTests | ApprovalMode::MismatchedPayloadForTests => {
                 let now = Utc::now();
                 Ok(Some(ApprovalRecord {
                     approval_id: format!("appr_{}", Uuid::new_v4()),
                     action_request_id: action.id.clone(),
-                    payload_hash,
+                    payload_hash: match self.mode {
+                        ApprovalMode::MismatchedPayloadForTests => "sha256:changed-payload".into(),
+                        ApprovalMode::AutoApproveForTests => payload_hash,
+                        ApprovalMode::Reject => unreachable!("reject mode handled separately"),
+                    },
                     policy_hash,
                     approved_by: "local-test-approver".into(),
                     approved_at: now,

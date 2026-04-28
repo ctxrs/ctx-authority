@@ -6,19 +6,22 @@ Example:
 
 ```yaml
 version: 1
-agents:
-  demo:
-    grants:
-      - capability: http.request
-        resource: fake-github
-        allow:
-          methods: [GET]
-          hosts: [api.fake-github.local]
-      - capability: email.send
-        resource: fake-mailgun
-        require_approval:
-          recipients:
-            external: true
+grants:
+  - id: fake_http_read
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes:
+        - /repos/ctx-rs/authority-broker/issues
+  - id: fake_mail_send_requires_approval
+    agent: demo
+    capability: email.send
+    resource: fake-mailgun
+    allow: {}
+    require_approval: true
 ```
 
 ## Decisions
@@ -30,6 +33,9 @@ Policy decision values:
 - `require_approval`
 
 Policy evaluation must return matched rule ids or explanations.
+`require_approval: true` on a matching grant changes the decision from `allow`
+to `require_approval`; the action can run only after a local approval record is
+issued for the same action payload hash and policy hash.
 
 ## Required v1 rule dimensions
 

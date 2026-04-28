@@ -8,7 +8,7 @@ use authority_broker::policy::PolicyDocument;
 use authority_broker::providers::FakeProvider;
 use authority_broker::receipts::ReceiptSigner;
 use authority_broker::runtime::BrokerRuntime;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -71,7 +71,15 @@ enum ActionCommand {
         policy: PathBuf,
         #[arg(long)]
         file: PathBuf,
+        #[arg(long, value_enum)]
+        approval: Option<CliApprovalMode>,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliApprovalMode {
+    Approve,
+    Reject,
 }
 
 #[derive(Debug, Subcommand)]
@@ -141,13 +149,17 @@ fn policy(command: PolicyCommand) -> anyhow::Result<()> {
 
 fn action(command: ActionCommand) -> anyhow::Result<()> {
     match command {
-        ActionCommand::Request { policy, file } => {
+        ActionCommand::Request {
+            policy,
+            file,
+            approval,
+        } => {
             let paths = AppPaths::discover()?;
             paths.ensure()?;
             let policy = load_policy(policy)?;
             let request = load_action(file)?;
             let audit = AuditLog::open(&paths.audit_db)?;
-            let approvals = ApprovalProvider::auto_approve_for_tests();
+            let approvals = approval_provider(approval)?;
             let provider = FakeProvider::new(&request.resource);
             let backend = FakeBackend::new(BTreeMap::from([(
                 "default".to_string(),
@@ -211,4 +223,23 @@ fn load_action(path: PathBuf) -> anyhow::Result<ActionRequest> {
     let text = fs::read_to_string(&path)
         .with_context(|| format!("failed to read action {}", path.display()))?;
     Ok(serde_json::from_str(&text)?)
+}
+
+fn approval_provider(mode: Option<CliApprovalMode>) -> anyhow::Result<ApprovalProvider> {
+    let mode = match mode {
+        Some(mode) => mode,
+        None => match std::env::var("CTXA_APPROVAL_MODE") {
+            Ok(value) if value == "approve" || value == "auto" => CliApprovalMode::Approve,
+            Ok(value) if value == "reject" => CliApprovalMode::Reject,
+            Ok(value) => anyhow::bail!(
+                "unsupported CTXA_APPROVAL_MODE {value:?}; expected \"approve\" or \"reject\""
+            ),
+            Err(_) => CliApprovalMode::Approve,
+        },
+    };
+
+    Ok(match mode {
+        CliApprovalMode::Approve => ApprovalProvider::auto_approve_for_tests(),
+        CliApprovalMode::Reject => ApprovalProvider::reject(),
+    })
 }

@@ -34,6 +34,10 @@ Payload hash: sha256:...
 Approve? [y/N]
 ```
 
+For deterministic local tests, `ctxa action request` may also be run with
+`--approval approve` or `--approval reject`. The same behavior can be selected
+with `CTXA_APPROVAL_MODE=approve` or `CTXA_APPROVAL_MODE=reject`.
+
 If there is a local daemon, approval can happen from another terminal:
 
 ```bash
