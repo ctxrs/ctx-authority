@@ -31,10 +31,12 @@ The default test suite should be offline.
 
 - Bazel wrapper targets should resolve the workspace root in normal shell usage
   and under Bazel runfiles.
-- Cargo build output must stay outside the repository through `.cargo/config.toml`
-  and the Bazel wrapper environment.
+- Cargo build output must stay outside the repository through the Bazel wrapper
+  environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
+  commands.
 - Wrapper scripts should use locked dependencies where Cargo supports it.
 - The CLI smoke test should capture stdout and stderr for each command and scan
   generated local state for the fake secret sentinel.
 - The leak scan should use high-confidence credential patterns so public docs
-  and fake fixtures do not create noisy failures.
+  and fake fixtures do not create noisy failures. Its `grep` fallback must fail
+  closed on scanner errors when `rg` is unavailable.
