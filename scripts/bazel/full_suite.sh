@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "${BUILD_WORKSPACE_DIRECTORY:-$(pwd)}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/env.sh"
+cd "$(authority_broker_workspace_root)"
 
-scripts/bazel/cargo_fmt_check.sh
-scripts/bazel/cargo_clippy_check.sh
-scripts/bazel/cargo_test.sh
-scripts/bazel/cli_smoke_test.sh
-scripts/bazel/leak_scan.sh
+"$script_dir/cargo_fmt_check.sh"
+"$script_dir/cargo_clippy_check.sh"
+"$script_dir/cargo_test.sh"
+"$script_dir/cli_smoke_test.sh"
+"$script_dir/leak_scan.sh"

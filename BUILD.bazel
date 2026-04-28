@@ -1,33 +1,78 @@
-load("@bazel_tools//tools/build_defs/sh:sh_test.bzl", "sh_test")
+load("//:scripts/bazel/shell_test.bzl", "shell_test")
 
-sh_test(
+COMMON_TEST_DATA = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "scripts/bazel/env.sh",
+] + glob([
+    "src/**",
+    "tests/**",
+])
+
+REPO_SCAN_DATA = [
+    ".cargo/config.toml",
+    "AGENTS.md",
+    "ARCHITECTURE.md",
+    "BUILD.bazel",
+    "CONTRIBUTING.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "MODULE.bazel",
+    "README.md",
+    "SECURITY.md",
+] + glob([
+    ".github/workflows/**",
+    "docs/**",
+    "scripts/**",
+    "skills/**",
+    "src/**",
+    "tests/**",
+], allow_empty = True)
+
+shell_test(
     name = "fmt_check",
-    srcs = ["scripts/bazel/cargo_fmt_check.sh"],
+    src = "scripts/bazel/cargo_fmt_check.sh",
+    data = COMMON_TEST_DATA,
+    size = "small",
 )
 
-sh_test(
+shell_test(
     name = "clippy_check",
-    srcs = ["scripts/bazel/cargo_clippy_check.sh"],
+    src = "scripts/bazel/cargo_clippy_check.sh",
+    data = COMMON_TEST_DATA,
+    size = "large",
+    timeout = "long",
 )
 
-sh_test(
+shell_test(
     name = "unit_tests",
-    srcs = ["scripts/bazel/cargo_test.sh"],
+    src = "scripts/bazel/cargo_test.sh",
+    data = COMMON_TEST_DATA,
+    size = "medium",
+    timeout = "moderate",
 )
 
-sh_test(
+shell_test(
     name = "cli_smoke_tests",
-    srcs = ["scripts/bazel/cli_smoke_test.sh"],
-    data = glob(["tests/fixtures/**"]),
+    src = "scripts/bazel/cli_smoke_test.sh",
+    data = COMMON_TEST_DATA,
+    size = "medium",
+    timeout = "moderate",
 )
 
-sh_test(
+shell_test(
     name = "leak_scan",
-    srcs = ["scripts/bazel/leak_scan.sh"],
+    src = "scripts/bazel/leak_scan.sh",
+    data = REPO_SCAN_DATA,
+    size = "small",
 )
 
-sh_test(
+shell_test(
     name = "full_suite",
-    srcs = ["scripts/bazel/full_suite.sh"],
-    data = glob(["tests/fixtures/**"]),
+    src = "scripts/bazel/full_suite.sh",
+    data = REPO_SCAN_DATA,
+    size = "large",
+    timeout = "long",
 )
