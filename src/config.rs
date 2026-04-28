@@ -1,3 +1,4 @@
+use crate::backends::SecretBackendConfig;
 use crate::{AuthorityError, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,8 @@ pub struct AppConfig {
     pub agents: Vec<AgentConfig>,
     #[serde(default)]
     pub policies: Vec<PolicyConfig>,
+    #[serde(default)]
+    pub secret_backend: Option<SecretBackendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,5 +77,28 @@ impl AppConfig {
         }
         fs::write(path, serde_yaml::to_string(self)?)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_config_loads_secret_backend_without_requiring_cli_wiring() {
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+secret_backend:
+  type: env-file
+  path: .env.local
+"#,
+        )
+        .unwrap();
+
+        let secret_backend = config.secret_backend.expect("secret backend");
+        assert!(matches!(
+            secret_backend,
+            SecretBackendConfig::EnvFile { ref path } if path == Path::new(".env.local")
+        ));
     }
 }
