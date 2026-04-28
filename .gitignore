@@ -13,3 +13,4 @@ tmp/
 coverage/
 .local/
 .cargo-target/
+bazel-*

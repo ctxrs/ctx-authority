@@ -39,9 +39,7 @@ where
 }
 
 fn handle_message(message: Value) -> Option<Value> {
-    let Some(id) = message.get("id").cloned() else {
-        return None;
-    };
+    let id = message.get("id").cloned()?;
 
     if message.get("jsonrpc").and_then(Value::as_str) != Some(JSONRPC_VERSION) {
         return Some(error_response(id, -32600, "invalid JSON-RPC version"));
