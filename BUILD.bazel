@@ -1,0 +1,33 @@
+load("@bazel_tools//tools/build_defs/sh:sh_test.bzl", "sh_test")
+
+sh_test(
+    name = "fmt_check",
+    srcs = ["scripts/bazel/cargo_fmt_check.sh"],
+)
+
+sh_test(
+    name = "clippy_check",
+    srcs = ["scripts/bazel/cargo_clippy_check.sh"],
+)
+
+sh_test(
+    name = "unit_tests",
+    srcs = ["scripts/bazel/cargo_test.sh"],
+)
+
+sh_test(
+    name = "cli_smoke_tests",
+    srcs = ["scripts/bazel/cli_smoke_test.sh"],
+    data = glob(["tests/fixtures/**"]),
+)
+
+sh_test(
+    name = "leak_scan",
+    srcs = ["scripts/bazel/leak_scan.sh"],
+)
+
+sh_test(
+    name = "full_suite",
+    srcs = ["scripts/bazel/full_suite.sh"],
+    data = glob(["tests/fixtures/**"]),
+)

@@ -1,0 +1,11 @@
+version: 1
+grants:
+  - id: fake_http_read
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes:
+        - /repos/ctx-rs/authority-broker/issues
