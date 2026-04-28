@@ -117,6 +117,7 @@ Record:
 - approval requested
 - approval granted
 - approval rejected
+- approval failed or unavailable
 - approval expired
 - execution attempted
 - execution skipped because approval failed

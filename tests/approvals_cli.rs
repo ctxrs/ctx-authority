@@ -298,6 +298,19 @@ fn action_request_requires_explicit_approval_provider_by_default() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("approval is required"));
+
+    let log_output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("log")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let log_text = String::from_utf8(log_output).unwrap();
+    assert!(log_text.contains("approval_failed"), "{log_text}");
+    assert!(log_text.contains("execution_skipped"), "{log_text}");
+    assert!(!log_text.contains("execution_attempted"), "{log_text}");
 }
 
 #[test]
@@ -318,6 +331,19 @@ fn action_request_can_reject_approval_required_action() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("approval rejected"));
+
+    let log_output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("log")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let log_text = String::from_utf8(log_output).unwrap();
+    assert!(log_text.contains("approval_rejected"), "{log_text}");
+    assert!(log_text.contains("execution_skipped"), "{log_text}");
+    assert!(!log_text.contains("execution_attempted"), "{log_text}");
 }
 
 #[test]
@@ -431,6 +457,41 @@ grants:
         .assert()
         .failure()
         .stderr(predicate::str::contains("unsupported policy version"));
+}
+
+#[test]
+fn policy_check_rejects_unsupported_grant_capabilities() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("unsupported-capability-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: typo
+    agent: demo
+    capability: http.requset
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes: [/safe]
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported capability"));
 }
 
 #[test]

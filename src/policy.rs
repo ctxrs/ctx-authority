@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const SUPPORTED_POLICY_VERSION: u32 = 1;
+const SUPPORTED_CAPABILITIES: &[&str] = &["http.request", "email.send"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +55,14 @@ impl PolicyDocument {
 
     pub fn evaluate(&self, request: &ActionRequest) -> Result<PolicyDecision> {
         self.validate()?;
+        if !is_supported_capability(&request.capability) {
+            return Ok(PolicyDecision {
+                decision: PolicyDecisionKind::Deny,
+                reasons: vec![format!("unsupported capability {}", request.capability)],
+                matched_grants: vec![],
+            });
+        }
+
         let mut matched = Vec::new();
         let mut approval = false;
 
@@ -96,6 +105,13 @@ impl PolicyDocument {
 
 impl Grant {
     fn validate(&self) -> Result<()> {
+        if !is_supported_capability(&self.capability) {
+            return Err(AuthorityError::Config(format!(
+                "grant {} has unsupported capability {}",
+                self.id, self.capability
+            )));
+        }
+
         if self.capability == "http.request" {
             if self.allow.methods.is_empty()
                 || self.allow.hosts.is_empty()
@@ -142,50 +158,58 @@ impl Grant {
             return false;
         }
 
-        if request.capability == "http.request" {
-            let method = request
-                .operation
-                .get("method")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            let host = request
-                .operation
-                .get("host")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            let path = request
-                .operation
-                .get("path")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
+        match request.capability.as_str() {
+            "http.request" => self.matches_http_request(request),
+            "email.send" => true,
+            _ => false,
+        }
+    }
 
-            if !is_safe_http_path(path) {
-                return false;
-            }
+    fn matches_http_request(&self, request: &ActionRequest) -> bool {
+        let method = request
+            .operation
+            .get("method")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let host = request
+            .operation
+            .get("host")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let path = request
+            .operation
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
 
-            if !self.allow.methods.is_empty()
-                && !self.allow.methods.iter().any(|allowed| allowed == method)
-            {
-                return false;
-            }
-            if !self.allow.hosts.is_empty()
-                && !self.allow.hosts.iter().any(|allowed| allowed == host)
-            {
-                return false;
-            }
-            if !self.allow.path_prefixes.is_empty()
-                && !self
-                    .allow
-                    .path_prefixes
-                    .iter()
-                    .any(|prefix| path_matches_prefix(path, prefix))
-            {
-                return false;
-            }
+        if !is_safe_http_path(path) {
+            return false;
+        }
+
+        if !self.allow.methods.is_empty()
+            && !self.allow.methods.iter().any(|allowed| allowed == method)
+        {
+            return false;
+        }
+        if !self.allow.hosts.is_empty() && !self.allow.hosts.iter().any(|allowed| allowed == host) {
+            return false;
+        }
+        if !self.allow.path_prefixes.is_empty()
+            && !self
+                .allow
+                .path_prefixes
+                .iter()
+                .any(|prefix| path_matches_prefix(path, prefix))
+        {
+            return false;
         }
 
         true
     }
+}
+
+fn is_supported_capability(capability: &str) -> bool {
+    SUPPORTED_CAPABILITIES.contains(&capability)
 }
 
 fn path_matches_prefix(path: &str, prefix: &str) -> bool {
@@ -348,6 +372,27 @@ grants:
         };
         let err = policy.validate().unwrap_err().to_string();
         assert!(err.contains("must specify methods, hosts, and path_prefixes"));
+    }
+
+    #[test]
+    fn rejects_unsupported_grant_capabilities() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "typo".into(),
+                agent: "demo".into(),
+                capability: "http.requset".into(),
+                resource: "github".into(),
+                allow: AllowRule {
+                    methods: vec!["GET".into()],
+                    hosts: vec!["api.github.com".into()],
+                    path_prefixes: vec!["/safe".into()],
+                },
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("unsupported capability"));
     }
 
     #[test]

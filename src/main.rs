@@ -235,7 +235,7 @@ fn approval_provider(mode: Option<CliApprovalMode>) -> anyhow::Result<ApprovalPr
     let mode = match mode {
         Some(mode) => mode,
         None => match std::env::var("CTXA_APPROVAL_MODE") {
-            Ok(value) if value == "approve" || value == "auto" => CliApprovalMode::Approve,
+            Ok(value) if value == "approve" => CliApprovalMode::Approve,
             Ok(value) if value == "reject" => CliApprovalMode::Reject,
             Ok(value) => anyhow::bail!(
                 "unsupported CTXA_APPROVAL_MODE {value:?}; expected \"approve\" or \"reject\""

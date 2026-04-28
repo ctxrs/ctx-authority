@@ -49,6 +49,14 @@ issued for the same action payload hash and policy hash.
 - approval required
 - deny rule
 
+## Supported v1 capabilities
+
+- `http.request`
+- `email.send`
+
+Unsupported capability names in grants are invalid policy. Unsupported
+capability names in action requests must deny and must not reach a provider.
+
 ## Grants
 
 Policies should support durable scoped grants so humans do not have to approve
