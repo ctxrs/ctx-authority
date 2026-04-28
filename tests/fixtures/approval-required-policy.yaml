@@ -1,0 +1,8 @@
+version: 1
+grants:
+  - id: fake_mail_send_requires_approval
+    agent: demo
+    capability: email.send
+    resource: fake-mailgun
+    allow: {}
+    require_approval: true
