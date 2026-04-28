@@ -141,7 +141,7 @@ impl Grant {
                 .allow
                 .path_prefixes
                 .iter()
-                .any(|prefix| !is_safe_http_path(prefix))
+                .any(|prefix| !is_safe_http_path_prefix(prefix))
             {
                 return Err(AuthorityError::Config(format!(
                     "http.request grant {} has an invalid path_prefix",
@@ -248,7 +248,7 @@ fn is_supported_capability(capability: &str) -> bool {
 }
 
 fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    if !is_safe_http_path(path) || !is_safe_http_path(prefix) {
+    if !is_safe_http_path(path) || !is_safe_http_path_prefix(prefix) {
         return false;
     }
 
@@ -279,6 +279,10 @@ fn is_safe_http_path(path: &str) -> bool {
     }
 
     !current.contains('%') && !has_dot_segment_or_backslash(&current)
+}
+
+fn is_safe_http_path_prefix(path: &str) -> bool {
+    is_safe_http_path(path) && path != "/" && !path.ends_with('/')
 }
 
 fn has_dot_segment_or_backslash(path: &str) -> bool {
@@ -321,8 +325,17 @@ fn recipient_domain(address: &str) -> Option<&str> {
     if address != address.trim() {
         return None;
     }
-    let (local, domain) = address.rsplit_once('@')?;
-    if local.is_empty() || domain.contains('@') || !is_safe_email_domain(domain) {
+    if address
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace() || matches!(byte, b',' | b';' | b'<' | b'>'))
+    {
+        return None;
+    }
+
+    let mut parts = address.split('@');
+    let local = parts.next()?;
+    let domain = parts.next()?;
+    if parts.next().is_some() || local.is_empty() || !is_safe_email_domain(domain) {
         return None;
     }
     Some(domain)
@@ -480,6 +493,28 @@ grants:
     }
 
     #[test]
+    fn rejects_trailing_slash_http_path_prefix_entries() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "broad".into(),
+                agent: "demo".into(),
+                capability: "http.request".into(),
+                resource: "github".into(),
+                allow: AllowRule {
+                    methods: vec!["GET".into()],
+                    hosts: vec!["api.github.com".into()],
+                    path_prefixes: vec!["/repos/example/repo/issues/".into()],
+                    recipient_domains: vec![],
+                },
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("invalid path_prefix"));
+    }
+
+    #[test]
     fn http_path_prefixes_match_segment_boundaries() {
         assert!(path_matches_prefix(
             "/repos/example/repo/issues",
@@ -567,6 +602,8 @@ grants:
         };
         let mut mismatched = matching.clone();
         mismatched.operation = json!({"to": "external@example.net"});
+        let mut multi_recipient = matching.clone();
+        multi_recipient.operation = json!({"to": "attacker@evil.test, external@example.com"});
 
         assert_eq!(
             policy.evaluate(&matching).unwrap().decision,
@@ -574,6 +611,10 @@ grants:
         );
         assert_eq!(
             policy.evaluate(&mismatched).unwrap().decision,
+            PolicyDecisionKind::Deny
+        );
+        assert_eq!(
+            policy.evaluate(&multi_recipient).unwrap().decision,
             PolicyDecisionKind::Deny
         );
     }

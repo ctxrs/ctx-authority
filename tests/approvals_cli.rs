@@ -568,6 +568,47 @@ fn policy_check_denies_email_recipient_domain_mismatch() {
 }
 
 #[test]
+fn policy_check_denies_multi_recipient_email_strings() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("multi-recipient-email-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_multi_recipient_email",
+  "agent_id": "demo",
+  "capability": "email.send",
+  "resource": "fake-mailgun",
+  "operation": {
+    "to": "attacker@evil.test, external@example.com",
+    "subject": "Demo approval"
+  },
+  "payload": {
+    "body": "Approval-bound test payload"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("approval-required-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_rejects_incomplete_http_grants() {
     let temp = tempfile::tempdir().unwrap();
     let policy_path = temp.path().join("broad-policy.yaml");
@@ -618,6 +659,41 @@ grants:
       methods: [GET]
       hosts: [api.fake-github.local]
       path_prefixes: ['']
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid path_prefix"));
+}
+
+#[test]
+fn policy_check_rejects_trailing_slash_http_path_prefix() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("trailing-slash-prefix-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: broad
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes: ['/repos/ctx-rs/authority-broker/issues/']
 "#,
     )
     .unwrap();
