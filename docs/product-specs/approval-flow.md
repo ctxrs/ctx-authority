@@ -75,14 +75,16 @@ If any bound field changes, execution must fail.
 
 Approvals should expire quickly by default. Candidate local default: 10 minutes.
 
-Grants should have explicit scope and optional expiry. A grant without an expiry
-must still be narrow enough to be safe.
+Grants should have explicit scope. Expiring durable grants are planned, but the
+v1 schema does not yet accept `expires_at`; until that lands, a grant must be
+narrow enough to be safe without an expiry.
 
 Example durable grant:
 
 ```yaml
 grants:
   - id: github_issues_read
+    agent: demo
     capability: http.request
     resource: github-main
     allow:
@@ -92,17 +94,20 @@ grants:
         - /repos/ctx-rs/authority-broker/issues
 ```
 
-Example time-bounded grant:
+Planned time-bounded grant shape:
 
 ```yaml
 grants:
   - id: vendor_lookup_window
+    agent: demo
     capability: http.request
     resource: vendor-api
     expires_at: "2026-04-28T23:00:00Z"
     allow:
       methods: [GET]
       hosts: [api.vendor.example]
+      path_prefixes:
+        - /vendors
 ```
 
 ## Audit

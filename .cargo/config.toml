@@ -1,5 +1,0 @@
-[build]
-target-dir = "/Volumes/ctx-cache/authority-broker/target"
-
-[env]
-SCCACHE_DIR = "/Volumes/ctx-cache/authority-broker/sccache"

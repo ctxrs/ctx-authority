@@ -43,6 +43,10 @@ Use the deeper docs as the source of truth. Keep this file short.
 
 ## Engineering rules
 
+- For local builds and tests, run through Bazel targets or source
+  `scripts/bazel/env.sh` before direct Cargo commands. That keeps Cargo output
+  and `sccache` state outside the repository and uses `/Volumes/ctx-cache` when
+  available.
 - Default to closed-system tests with fake providers.
 - Do not require internet access for the core test suite.
 - Do not expose raw secrets in stdout, stderr, logs, audit events, receipts, MCP

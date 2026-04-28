@@ -7,7 +7,7 @@ Decision: implement the first broker in Rust.
 Initial implementation choices:
 
 - CLI: `clap`
-- async runtime: `tokio`
+- async runtime: none in the initial CLI path
 - local DB: `rusqlite`
 - config: `serde` plus `serde_yaml`
 - JSON: `serde_json`
@@ -20,7 +20,7 @@ Should v1 be:
 
 - CLI-only, spawning per action
 - long-running local daemon with CLI client
-- CLI first, daemon added before HN
+- CLI first, daemon added after the command surface stabilizes
 
 ## Secret backends
 
@@ -62,7 +62,7 @@ Should receipts use:
 Should v1 include a local web approval UI, or only CLI/TUI approval?
 
 Current recommendation: CLI/TUI first. Add local web UI only if it materially
-improves demo and can be tested deterministically.
+improves local approval ergonomics and can be tested deterministically.
 
 ## Telemetry
 

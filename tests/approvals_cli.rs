@@ -127,6 +127,86 @@ fn policy_check_denies_path_prefix_siblings() {
 }
 
 #[test]
+fn policy_check_denies_dot_segment_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("dot-segment-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_dot_segment",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues/../settings"
+  },
+  "payload": {}
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
+fn policy_check_denies_encoded_dot_segment_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("encoded-dot-segment-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_encoded_dot_segment",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues/%2e%2e/settings"
+  },
+  "payload": {}
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_returns_require_approval_for_approval_grant() {
     let output = ctxa()
         .args([
@@ -385,6 +465,41 @@ grants:
         .stderr(predicate::str::contains(
             "must specify methods, hosts, and path_prefixes",
         ));
+}
+
+#[test]
+fn policy_check_rejects_empty_http_path_prefix() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("empty-prefix-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: broad
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes: ['']
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid path_prefix"));
 }
 
 #[test]

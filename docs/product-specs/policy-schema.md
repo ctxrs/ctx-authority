@@ -68,6 +68,17 @@ For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
 `path_prefixes` are all present and non-empty. Explicit wildcards can be added
 later, but omitted HTTP dimensions must not act as implicit wildcards.
 
+HTTP path constraints must be safe to compare without relying on provider
+normalization:
+
+- `path_prefixes` entries must be absolute paths and must not be empty.
+- Path prefixes and requested paths must not contain `.` or `..` segments.
+- Percent-encoded dot segments such as `%2e%2e` and double-encoded variants are
+  unsafe and must deny or fail validation.
+- Backslashes are invalid in HTTP paths.
+- Prefix matching is exact or subtree-only: `/issues` matches `/issues/1`, but
+  not `/issues-admin`.
+
 ## Default behavior
 
 - Unsupported policy version: invalid policy, deny.

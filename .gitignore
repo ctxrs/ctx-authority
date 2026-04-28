@@ -12,5 +12,6 @@ build/
 tmp/
 coverage/
 .local/
+.cargo/config.toml
 .cargo-target/
 bazel-*

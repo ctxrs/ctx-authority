@@ -37,7 +37,8 @@ externalized build output, and a dev-to-main promotion flow.
 ## Build output
 
 Cargo build artifacts and `sccache` state should live outside the repo and off
-the internal drive when possible:
+the internal drive when possible. Bazel wrapper scripts and sourced local dev
+shells use this external cache root when it is available:
 
 ```text
 /Volumes/ctx-cache/authority-broker/target
@@ -59,9 +60,11 @@ Expected targets:
 - `//:full_suite`
 
 Wrapper scripts must work both from a normal checkout and under Bazel runfiles.
-They should set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository and
-disable `RUSTC_WRAPPER` when `sccache` is unavailable so tests do not depend on a
-single workstation path.
+They set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository and disable
+`RUSTC_WRAPPER` when `sccache` is unavailable so tests do not depend on a single
+workstation path. The repo must not commit a machine-specific
+`.cargo/config.toml`; developers can create one locally if they want direct
+`cargo` commands to always use a custom cache.
 
 The CLI smoke test must exercise:
 
@@ -81,7 +84,8 @@ fake fixtures, or sanitized security guidance.
 
 ## Done means
 
-- Cargo outputs use `/Volumes/ctx-cache`.
+- Cargo outputs use `/Volumes/ctx-cache` through Bazel/dev env scripts when it
+  is available, with a temp-dir fallback.
 - `sccache` is wired.
 - Bazel targets exist and pass.
 - `dev` exists and is used for integration.

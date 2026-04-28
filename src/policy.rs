@@ -96,15 +96,40 @@ impl PolicyDocument {
 
 impl Grant {
     fn validate(&self) -> Result<()> {
-        if self.capability == "http.request"
-            && (self.allow.methods.is_empty()
+        if self.capability == "http.request" {
+            if self.allow.methods.is_empty()
                 || self.allow.hosts.is_empty()
-                || self.allow.path_prefixes.is_empty())
-        {
-            return Err(AuthorityError::Config(format!(
-                "http.request grant {} must specify methods, hosts, and path_prefixes",
-                self.id
-            )));
+                || self.allow.path_prefixes.is_empty()
+            {
+                return Err(AuthorityError::Config(format!(
+                    "http.request grant {} must specify methods, hosts, and path_prefixes",
+                    self.id
+                )));
+            }
+
+            if self.allow.methods.iter().any(|method| method.is_empty()) {
+                return Err(AuthorityError::Config(format!(
+                    "http.request grant {} has an empty method",
+                    self.id
+                )));
+            }
+            if self.allow.hosts.iter().any(|host| host.is_empty()) {
+                return Err(AuthorityError::Config(format!(
+                    "http.request grant {} has an empty host",
+                    self.id
+                )));
+            }
+            if self
+                .allow
+                .path_prefixes
+                .iter()
+                .any(|prefix| !is_safe_http_path(prefix))
+            {
+                return Err(AuthorityError::Config(format!(
+                    "http.request grant {} has an invalid path_prefix",
+                    self.id
+                )));
+            }
         }
         Ok(())
     }
@@ -134,6 +159,10 @@ impl Grant {
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
 
+            if !is_safe_http_path(path) {
+                return false;
+            }
+
             if !self.allow.methods.is_empty()
                 && !self.allow.methods.iter().any(|allowed| allowed == method)
             {
@@ -160,10 +189,73 @@ impl Grant {
 }
 
 fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    if !is_safe_http_path(path) || !is_safe_http_path(prefix) {
+        return false;
+    }
+
     path == prefix
         || path
             .strip_prefix(prefix)
             .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn is_safe_http_path(path: &str) -> bool {
+    if path.is_empty() || !path.starts_with('/') || path.contains('\\') {
+        return false;
+    }
+
+    let mut current = path.to_owned();
+    for _ in 0..4 {
+        if has_dot_segment_or_backslash(&current) {
+            return false;
+        }
+
+        let Some(decoded) = percent_decode_once(&current) else {
+            return false;
+        };
+        if decoded == current {
+            return true;
+        }
+        current = decoded;
+    }
+
+    !current.contains('%') && !has_dot_segment_or_backslash(&current)
+}
+
+fn has_dot_segment_or_backslash(path: &str) -> bool {
+    path.contains('\\')
+        || path
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
+}
+
+fn percent_decode_once(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            output.push((hex_value(high)? << 4) | hex_value(low)?);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(output).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +351,27 @@ grants:
     }
 
     #[test]
+    fn rejects_empty_http_path_prefix_entries() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "broad".into(),
+                agent: "demo".into(),
+                capability: "http.request".into(),
+                resource: "github".into(),
+                allow: AllowRule {
+                    methods: vec!["GET".into()],
+                    hosts: vec!["api.github.com".into()],
+                    path_prefixes: vec!["".into()],
+                },
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("invalid path_prefix"));
+    }
+
+    #[test]
     fn http_path_prefixes_match_segment_boundaries() {
         assert!(path_matches_prefix(
             "/repos/example/repo/issues",
@@ -272,5 +385,28 @@ grants:
             "/repos/example/repo/issues-admin",
             "/repos/example/repo/issues"
         ));
+    }
+
+    #[test]
+    fn unsafe_http_paths_do_not_match_prefixes() {
+        let prefix = "/repos/example/repo/issues";
+
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/../settings",
+            prefix
+        ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/%2e%2e/settings",
+            prefix
+        ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues/%252e%252e/settings",
+            prefix
+        ));
+        assert!(!path_matches_prefix(
+            r"/repos/example/repo/issues\..\settings",
+            prefix
+        ));
+        assert!(!path_matches_prefix("repos/example/repo/issues/1", prefix));
     }
 }

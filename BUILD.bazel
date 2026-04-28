@@ -1,7 +1,6 @@
 load("//:scripts/bazel/shell_test.bzl", "shell_test")
 
 COMMON_TEST_DATA = [
-    ".cargo/config.toml",
     "Cargo.lock",
     "Cargo.toml",
     "scripts/bazel/env.sh",
@@ -11,7 +10,6 @@ COMMON_TEST_DATA = [
 ])
 
 REPO_SCAN_DATA = [
-    ".cargo/config.toml",
     "AGENTS.md",
     "ARCHITECTURE.md",
     "BUILD.bazel",
