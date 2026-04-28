@@ -71,5 +71,6 @@ Broad grants should be avoided in examples.
 - Unknown capability: deny.
 - Unknown resource: deny.
 - Invalid policy: deny.
+- Unknown policy fields: invalid policy, deny.
 - Evaluation error: deny.
 - Conflicting allow and deny: deny.

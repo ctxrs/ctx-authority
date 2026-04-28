@@ -37,6 +37,7 @@ grep -q '"decision": "allow"' "$tmp/decision.json"
 run_ctxa action_request action request --policy tests/fixtures/demo-policy.yaml --file tests/fixtures/demo-action.json
 cp "$tmp/action_request.stdout" "$tmp/receipt.json"
 grep -q '"receipt_version": "authority.receipt.v1"' "$tmp/receipt.json"
+run_ctxa receipt_verify receipts verify "$tmp/receipt.json"
 run_ctxa audit_log log --limit 20
 
 if grep -R -n --binary-files=text 'fake-secret-value' "$tmp" "$CTXA_HOME" >/dev/null 2>&1; then

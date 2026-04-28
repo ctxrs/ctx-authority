@@ -57,7 +57,8 @@ authority_broker_cache_root() {
 cache_root="$(authority_broker_cache_root)"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache_root/target}"
 export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
   if command -v sccache >/dev/null 2>&1; then

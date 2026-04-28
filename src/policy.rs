@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyDocument {
     pub version: u32,
     #[serde(default)]
@@ -12,6 +13,7 @@ pub struct PolicyDocument {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Grant {
     pub id: String,
     pub agent: String,
@@ -24,6 +26,7 @@ pub struct Grant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AllowRule {
     #[serde(default)]
     pub methods: Vec<String>,
@@ -168,5 +171,25 @@ mod tests {
             policy.evaluate(&request).decision,
             PolicyDecisionKind::Allow
         );
+    }
+
+    #[test]
+    fn rejects_unknown_policy_fields() {
+        let error = serde_yaml::from_str::<PolicyDocument>(
+            r#"
+version: 1
+grants:
+  - id: github_read
+    agent: openclaw
+    capability: http.request
+    resource: github
+    allow:
+      method: [GET]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("unknown field"));
     }
 }

@@ -19,11 +19,14 @@ pub struct BrokerRuntime<'a> {
 
 impl<'a> BrokerRuntime<'a> {
     pub fn execute(&self, request: &ActionRequest) -> Result<Receipt> {
-        let payload_hash = request
-            .payload_hash
-            .clone()
-            .map(Ok)
-            .unwrap_or_else(|| payload_hash(&request.payload))?;
+        let payload_hash = payload_hash(&request.payload)?;
+        if let Some(provided_hash) = &request.payload_hash {
+            if provided_hash != &payload_hash {
+                return Err(AuthorityError::Config(
+                    "payload_hash does not match canonical payload".into(),
+                ));
+            }
+        }
         let policy_hash = self.policy.hash()?;
         let decision = self.policy.evaluate(request);
         self.audit.record(

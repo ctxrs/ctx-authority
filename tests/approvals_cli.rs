@@ -163,6 +163,24 @@ fn action_request_auto_approves_approval_required_action() {
 }
 
 #[test]
+fn action_request_requires_explicit_approval_provider_by_default() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("approval-required-policy.yaml").to_str().unwrap(),
+            "--file",
+            fixture("approval-required-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("approval is required"));
+}
+
+#[test]
 fn action_request_can_reject_approval_required_action() {
     let home = tempfile::tempdir().unwrap();
     ctxa()
@@ -199,6 +217,134 @@ fn action_request_can_reject_approval_required_action_from_env() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("approval rejected"));
+}
+
+#[test]
+fn action_request_rejects_mismatched_supplied_payload_hash() {
+    let home = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let mut action: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fixture("demo-action.json")).unwrap()).unwrap();
+    action["payload_hash"] = serde_json::Value::String("sha256:not-the-payload".into());
+    let action_path = temp.path().join("bad-hash-action.json");
+    fs::write(&action_path, serde_json::to_string_pretty(&action).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "payload_hash does not match canonical payload",
+        ));
+}
+
+#[test]
+fn policy_check_rejects_unknown_policy_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("bad-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: bad
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      method: [GET]
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown field"));
+}
+
+#[test]
+fn receipts_verify_accepts_valid_and_rejects_tampering() {
+    let home = tempfile::tempdir().unwrap();
+    let receipt_path = home.path().join("receipt.json");
+    let tampered_path = home.path().join("tampered-receipt.json");
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    fs::write(&receipt_path, &output).unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", receipt_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("receipt verified"));
+
+    let mut receipt: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    receipt["execution"]["status"] = serde_json::Value::String("failed".into());
+    fs::write(&tampered_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", tampered_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "receipt signature verification failed",
+        ));
+}
+
+#[test]
+fn init_preserves_existing_config() {
+    let home = tempfile::tempdir().unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["agent", "create", "demo"])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    let config = fs::read_to_string(home.path().join("config.yaml")).unwrap();
+    assert!(config.contains("demo"));
 }
 
 #[test]

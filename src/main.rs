@@ -108,8 +108,12 @@ fn main() -> anyhow::Result<()> {
 fn init() -> anyhow::Result<()> {
     let paths = AppPaths::discover()?;
     paths.ensure()?;
-    let config = AppConfig::default();
-    config.save(&paths.config_file)?;
+    if paths.config_file.exists() {
+        AppConfig::load(&paths.config_file)
+            .with_context(|| format!("failed to load {}", paths.config_file.display()))?;
+    } else {
+        AppConfig::default().save(&paths.config_file)?;
+    }
     AuditLog::open(&paths.audit_db)?;
     ReceiptSigner::load_or_create(&paths)?;
     println!("initialized {}", paths.home.display());
@@ -184,12 +188,12 @@ fn action(command: ActionCommand) -> anyhow::Result<()> {
 fn receipts(command: ReceiptCommand) -> anyhow::Result<()> {
     match command {
         ReceiptCommand::Verify { file } => {
+            let paths = AppPaths::discover()?;
             let text = fs::read_to_string(file)?;
             let receipt: authority_broker::models::Receipt = serde_json::from_str(&text)?;
-            if receipt.signature.alg != "ed25519" || receipt.signature.sig.is_empty() {
-                anyhow::bail!("receipt is missing a supported signature");
-            }
-            println!("receipt is structurally signed; key-based verification is not wired yet");
+            let signer = ReceiptSigner::load(&paths)?;
+            signer.verify_local_receipt(&receipt)?;
+            println!("receipt verified with local key {}", signer.key_id());
             Ok(())
         }
     }
@@ -236,7 +240,7 @@ fn approval_provider(mode: Option<CliApprovalMode>) -> anyhow::Result<ApprovalPr
             Ok(value) => anyhow::bail!(
                 "unsupported CTXA_APPROVAL_MODE {value:?}; expected \"approve\" or \"reject\""
             ),
-            Err(_) => CliApprovalMode::Approve,
+            Err(_) => return Ok(ApprovalProvider::require_explicit()),
         },
     };
 

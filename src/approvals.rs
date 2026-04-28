@@ -1,5 +1,5 @@
 use crate::models::{ActionRequest, ApprovalRecord};
-use crate::Result;
+use crate::{AuthorityError, Result};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub enum ApprovalMode {
     AutoApproveForTests,
     MismatchedPayloadForTests,
+    RequireExplicit,
     Reject,
 }
 
@@ -25,6 +26,12 @@ impl ApprovalProvider {
     pub fn reject() -> Self {
         Self {
             mode: ApprovalMode::Reject,
+        }
+    }
+
+    pub fn require_explicit() -> Self {
+        Self {
+            mode: ApprovalMode::RequireExplicit,
         }
     }
 
@@ -49,7 +56,9 @@ impl ApprovalProvider {
                     payload_hash: match self.mode {
                         ApprovalMode::MismatchedPayloadForTests => "sha256:changed-payload".into(),
                         ApprovalMode::AutoApproveForTests => payload_hash,
-                        ApprovalMode::Reject => unreachable!("reject mode handled separately"),
+                        ApprovalMode::RequireExplicit | ApprovalMode::Reject => {
+                            unreachable!("non-approval modes handled separately")
+                        }
                     },
                     policy_hash,
                     approved_by: "local-test-approver".into(),
@@ -57,6 +66,10 @@ impl ApprovalProvider {
                     expires_at: now + Duration::minutes(10),
                 }))
             }
+            ApprovalMode::RequireExplicit => Err(AuthorityError::ApprovalRequired(
+                "approval is required; no approval provider or explicit test approval was selected"
+                    .into(),
+            )),
             ApprovalMode::Reject => Ok(None),
         }
     }

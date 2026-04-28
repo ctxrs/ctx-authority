@@ -70,3 +70,10 @@ Why:
 The design should keep an envelope version so the hosted product can later move
 to JWS, COSE, or W3C-verifiable-credential-compatible formats without breaking
 v1 receipts.
+
+## Local verification
+
+`ctxa receipts verify receipt.json` verifies the Ed25519 signature against the
+current local broker key and rejects receipts signed by another key id. It must
+fail closed if the local signing key is missing, the key id differs, the
+signature cannot be decoded, or the receipt body was modified after signing.
