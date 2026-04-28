@@ -280,6 +280,40 @@ grants:
 }
 
 #[test]
+fn policy_check_rejects_unsupported_policy_versions() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("future-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 2
+grants:
+  - id: future
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported policy version"));
+}
+
+#[test]
 fn receipts_verify_accepts_valid_and_rejects_tampering() {
     let home = tempfile::tempdir().unwrap();
     let receipt_path = home.path().join("receipt.json");

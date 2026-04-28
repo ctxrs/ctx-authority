@@ -28,7 +28,7 @@ impl<'a> BrokerRuntime<'a> {
             }
         }
         let policy_hash = self.policy.hash()?;
-        let decision = self.policy.evaluate(request);
+        let decision = self.policy.evaluate(request)?;
         self.audit.record(
             "policy_decision",
             &json!({

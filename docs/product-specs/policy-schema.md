@@ -67,6 +67,7 @@ Broad grants should be avoided in examples.
 
 ## Default behavior
 
+- Unsupported policy version: invalid policy, deny.
 - Unknown agent: deny.
 - Unknown capability: deny.
 - Unknown resource: deny.

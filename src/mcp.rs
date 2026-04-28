@@ -201,12 +201,12 @@ fn receipts_verify(arguments: &Value) -> Value {
 fn receipt_from_arguments(arguments: &Value) -> std::result::Result<Receipt, String> {
     if let Some(receipt) = arguments.get("receipt") {
         return serde_json::from_value(receipt.clone())
-            .map_err(|err| format!("receipt is not a valid receipt object: {err}"));
+            .map_err(|_| "receipt is not a valid receipt object".to_string());
     }
 
     if let Some(receipt_json) = arguments.get("receipt_json").and_then(Value::as_str) {
         return serde_json::from_str(receipt_json)
-            .map_err(|err| format!("receipt_json is not a valid receipt: {err}"));
+            .map_err(|_| "receipt_json is not a valid receipt".to_string());
     }
 
     Err("missing receipt or receipt_json argument".into())
@@ -384,6 +384,27 @@ mod tests {
 
         assert!(response.get("error").is_none());
         assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn receipt_parse_errors_do_not_echo_input() {
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "receipts.verify",
+                "arguments": {
+                    "receipt": "super-secret-value"
+                }
+            }
+        }))
+        .unwrap();
+
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+        assert!(!text.contains("super-secret-value"), "{text}");
     }
 
     #[test]

@@ -144,7 +144,7 @@ fn policy(command: PolicyCommand) -> anyhow::Result<()> {
         PolicyCommand::Check { policy, file } => {
             let policy = load_policy(policy)?;
             let request = load_action(file)?;
-            let decision = policy.evaluate(&request);
+            let decision = policy.evaluate(&request)?;
             println!("{}", serde_json::to_string_pretty(&decision)?);
             Ok(())
         }

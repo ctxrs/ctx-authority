@@ -1,8 +1,10 @@
 use crate::canonical::canonical_json_bytes;
 use crate::models::{ActionRequest, PolicyDecision, PolicyDecisionKind};
-use crate::Result;
+use crate::{AuthorityError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+const SUPPORTED_POLICY_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +39,18 @@ pub struct AllowRule {
 }
 
 impl PolicyDocument {
-    pub fn evaluate(&self, request: &ActionRequest) -> PolicyDecision {
+    pub fn validate(&self) -> Result<()> {
+        if self.version != SUPPORTED_POLICY_VERSION {
+            return Err(AuthorityError::Config(format!(
+                "unsupported policy version {}; expected {}",
+                self.version, SUPPORTED_POLICY_VERSION
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn evaluate(&self, request: &ActionRequest) -> Result<PolicyDecision> {
+        self.validate()?;
         let mut matched = Vec::new();
         let mut approval = false;
 
@@ -52,14 +65,14 @@ impl PolicyDocument {
         }
 
         if matched.is_empty() {
-            return PolicyDecision {
+            return Ok(PolicyDecision {
                 decision: PolicyDecisionKind::Deny,
                 reasons: vec!["no matching grant".into()],
                 matched_grants: vec![],
-            };
+            });
         }
 
-        PolicyDecision {
+        Ok(PolicyDecision {
             decision: if approval {
                 PolicyDecisionKind::RequireApproval
             } else {
@@ -67,10 +80,11 @@ impl PolicyDocument {
             },
             reasons: vec![],
             matched_grants: matched,
-        }
+        })
     }
 
     pub fn hash(&self) -> Result<String> {
+        self.validate()?;
         let bytes = canonical_json_bytes(self)?;
         let digest = Sha256::digest(bytes);
         Ok(format!("sha256:{}", hex::encode(digest)))
@@ -168,7 +182,7 @@ mod tests {
         };
 
         assert_eq!(
-            policy.evaluate(&request).decision,
+            policy.evaluate(&request).unwrap().decision,
             PolicyDecisionKind::Allow
         );
     }
@@ -191,5 +205,15 @@ grants:
         .to_string();
 
         assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_unsupported_policy_versions() {
+        let policy = PolicyDocument {
+            version: 2,
+            grants: vec![],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("unsupported policy version"));
     }
 }
