@@ -60,11 +60,12 @@ Expected targets:
 - `//:full_suite`
 
 Wrapper scripts must work both from a normal checkout and under Bazel runfiles.
-They set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository and disable
-`RUSTC_WRAPPER` when `sccache` is unavailable so tests do not depend on a single
-workstation path. The repo must not commit a machine-specific
-`.cargo/config.toml`; developers can create one locally if they want direct
-`cargo` commands to always use a custom cache.
+They set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `sccache`
+is wired through `AUTHORITY_BROKER_USE_SCCACHE=1`; it defaults off on Darwin
+because local code-signing and external-volume policy issues can make the Rust
+wrapper flaky. The repo must not commit a machine-specific `.cargo/config.toml`;
+developers can create one locally if they want direct `cargo` commands to always
+use a custom cache.
 
 The CLI smoke test must exercise:
 
@@ -86,7 +87,7 @@ fake fixtures, or sanitized security guidance.
 
 - Cargo outputs use `/Volumes/ctx-cache` through Bazel/dev env scripts when it
   is available, with a temp-dir fallback.
-- `sccache` is wired.
+- `sccache` is wired and can be enabled explicitly.
 - Bazel targets exist and pass.
 - `dev` exists and is used for integration.
 - Public repo contains no private strategy or launch-plan content.

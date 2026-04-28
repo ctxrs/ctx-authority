@@ -37,6 +37,8 @@ pub struct AllowRule {
     pub hosts: Vec<String>,
     #[serde(default)]
     pub path_prefixes: Vec<String>,
+    #[serde(default)]
+    pub recipient_domains: Vec<String>,
 }
 
 impl PolicyDocument {
@@ -147,6 +149,25 @@ impl Grant {
                 )));
             }
         }
+        if self.capability == "email.send" {
+            if self.allow.recipient_domains.is_empty() {
+                return Err(AuthorityError::Config(format!(
+                    "email.send grant {} must specify recipient_domains",
+                    self.id
+                )));
+            }
+            if self
+                .allow
+                .recipient_domains
+                .iter()
+                .any(|domain| !is_safe_email_domain(domain))
+            {
+                return Err(AuthorityError::Config(format!(
+                    "email.send grant {} has an invalid recipient_domain",
+                    self.id
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -160,7 +181,7 @@ impl Grant {
 
         match request.capability.as_str() {
             "http.request" => self.matches_http_request(request),
-            "email.send" => true,
+            "email.send" => self.matches_email_send(request),
             _ => false,
         }
     }
@@ -205,6 +226,20 @@ impl Grant {
         }
 
         true
+    }
+
+    fn matches_email_send(&self, request: &ActionRequest) -> bool {
+        let Some(to) = request.operation.get("to").and_then(|value| value.as_str()) else {
+            return false;
+        };
+        let Some(domain) = recipient_domain(to) else {
+            return false;
+        };
+
+        self.allow
+            .recipient_domains
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(domain))
     }
 }
 
@@ -282,6 +317,31 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+fn recipient_domain(address: &str) -> Option<&str> {
+    if address != address.trim() {
+        return None;
+    }
+    let (local, domain) = address.rsplit_once('@')?;
+    if local.is_empty() || domain.contains('@') || !is_safe_email_domain(domain) {
+        return None;
+    }
+    Some(domain)
+}
+
+fn is_safe_email_domain(domain: &str) -> bool {
+    !domain.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.contains("..")
+        && domain
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
+        && domain
+            .split('.')
+            .all(|label| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +360,7 @@ mod tests {
                     methods: vec!["GET".into()],
                     hosts: vec!["api.github.com".into()],
                     path_prefixes: vec!["/repos/example/repo/issues".into()],
+                    recipient_domains: vec![],
                 },
                 require_approval: false,
             }],
@@ -387,6 +448,7 @@ grants:
                     methods: vec!["GET".into()],
                     hosts: vec!["api.github.com".into()],
                     path_prefixes: vec!["/safe".into()],
+                    recipient_domains: vec![],
                 },
                 require_approval: false,
             }],
@@ -408,6 +470,7 @@ grants:
                     methods: vec!["GET".into()],
                     hosts: vec!["api.github.com".into()],
                     path_prefixes: vec!["".into()],
+                    recipient_domains: vec![],
                 },
                 require_approval: false,
             }],
@@ -453,5 +516,65 @@ grants:
             prefix
         ));
         assert!(!path_matches_prefix("repos/example/repo/issues/1", prefix));
+    }
+
+    #[test]
+    fn rejects_unconstrained_email_grants() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "mail".into(),
+                agent: "demo".into(),
+                capability: "email.send".into(),
+                resource: "mail".into(),
+                allow: AllowRule::default(),
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("recipient_domains"));
+    }
+
+    #[test]
+    fn email_send_matches_recipient_domain() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "mail".into(),
+                agent: "demo".into(),
+                capability: "email.send".into(),
+                resource: "mail".into(),
+                allow: AllowRule {
+                    methods: vec![],
+                    hosts: vec![],
+                    path_prefixes: vec![],
+                    recipient_domains: vec!["example.com".into()],
+                },
+                require_approval: false,
+            }],
+        };
+        let matching = ActionRequest {
+            id: "act_1".into(),
+            agent_id: "demo".into(),
+            task_id: None,
+            capability: "email.send".into(),
+            resource: "mail".into(),
+            operation: json!({"to": "external@example.com"}),
+            payload: json!({}),
+            payload_hash: None,
+            idempotency_key: None,
+            requested_at: None,
+        };
+        let mut mismatched = matching.clone();
+        mismatched.operation = json!({"to": "external@example.net"});
+
+        assert_eq!(
+            policy.evaluate(&matching).unwrap().decision,
+            PolicyDecisionKind::Allow
+        );
+        assert_eq!(
+            policy.evaluate(&mismatched).unwrap().decision,
+            PolicyDecisionKind::Deny
+        );
     }
 }

@@ -20,7 +20,8 @@ grants:
     agent: demo
     capability: email.send
     resource: fake-mailgun
-    allow: {}
+    allow:
+      recipient_domains: [example.com]
     require_approval: true
 ```
 
@@ -75,6 +76,11 @@ Broad grants should be avoided in examples.
 For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
 `path_prefixes` are all present and non-empty. Explicit wildcards can be added
 later, but omitted HTTP dimensions must not act as implicit wildcards.
+
+For v1, `email.send` grants are invalid unless `recipient_domains` is present
+and non-empty. Recipient matching is exact and case-insensitive on the domain
+portion of `operation.to`; subdomain wildcards and multi-recipient payloads are
+future schema work.
 
 HTTP path constraints must be safe to compare without relying on provider
 normalization:

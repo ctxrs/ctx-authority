@@ -495,6 +495,79 @@ grants:
 }
 
 #[test]
+fn policy_check_rejects_unconstrained_email_grants() {
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("unconstrained-email-policy.yaml");
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: mail
+    agent: demo
+    capability: email.send
+    resource: fake-mailgun
+    allow: {}
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--file",
+            fixture("approval-required-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("recipient_domains"));
+}
+
+#[test]
+fn policy_check_denies_email_recipient_domain_mismatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("email-domain-mismatch-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_email_domain_mismatch",
+  "agent_id": "demo",
+  "capability": "email.send",
+  "resource": "fake-mailgun",
+  "operation": {
+    "to": "attacker@example.net",
+    "subject": "Demo approval"
+  },
+  "payload": {
+    "body": "Approval-bound test payload"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("approval-required-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_rejects_incomplete_http_grants() {
     let temp = tempfile::tempdir().unwrap();
     let policy_path = temp.path().join("broad-policy.yaml");

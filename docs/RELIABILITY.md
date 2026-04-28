@@ -34,6 +34,7 @@ The default test suite should be offline.
 - Cargo build output must stay outside the repository through the Bazel wrapper
   environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
   commands.
+- `sccache` must be opt-in where the local wrapper is known to be flaky.
 - Wrapper scripts should use locked dependencies where Cargo supports it.
 - The CLI smoke test should capture stdout and stderr for each command and scan
   generated local state for the fake secret sentinel.

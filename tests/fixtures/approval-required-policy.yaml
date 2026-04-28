@@ -4,5 +4,6 @@ grants:
     agent: demo
     capability: email.send
     resource: fake-mailgun
-    allow: {}
+    allow:
+      recipient_domains: [example.com]
     require_approval: true

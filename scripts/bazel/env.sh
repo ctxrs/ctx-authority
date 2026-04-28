@@ -61,9 +61,17 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
-  if command -v sccache >/dev/null 2>&1; then
+  use_sccache="${AUTHORITY_BROKER_USE_SCCACHE:-}"
+  if [[ -z "$use_sccache" ]]; then
+    case "$(uname -s)" in
+      Darwin) use_sccache=0 ;;
+      *) use_sccache=1 ;;
+    esac
+  fi
+
+  if [[ "$use_sccache" == "1" ]] && command -v sccache >/dev/null 2>&1; then
     export RUSTC_WRAPPER="$(command -v sccache)"
-  elif [[ -x /opt/homebrew/bin/sccache ]]; then
+  elif [[ "$use_sccache" == "1" && -x /opt/homebrew/bin/sccache ]]; then
     export RUSTC_WRAPPER="/opt/homebrew/bin/sccache"
   else
     export RUSTC_WRAPPER=""
