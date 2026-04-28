@@ -6,7 +6,7 @@ use authority_broker::config::{AppConfig, AppPaths};
 use authority_broker::models::ActionRequest;
 use authority_broker::policy::PolicyDocument;
 use authority_broker::providers::FakeProvider;
-use authority_broker::receipts::ReceiptSigner;
+use authority_broker::receipts::{receipt_from_json_str_strict, ReceiptSigner};
 use authority_broker::runtime::BrokerRuntime;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::BTreeMap;
@@ -190,7 +190,7 @@ fn receipts(command: ReceiptCommand) -> anyhow::Result<()> {
         ReceiptCommand::Verify { file } => {
             let paths = AppPaths::discover()?;
             let text = fs::read_to_string(file)?;
-            let receipt: authority_broker::models::Receipt = serde_json::from_str(&text)?;
+            let receipt = receipt_from_json_str_strict(&text)?;
             let signer = ReceiptSigner::load(&paths)?;
             signer.verify_local_receipt(&receipt)?;
             println!("receipt verified with local key {}", signer.key_id());

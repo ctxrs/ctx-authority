@@ -75,7 +75,8 @@ A grant is safe only when it is specific:
 Broad grants should be avoided in examples.
 For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
 `path_prefixes` are all present and non-empty. Explicit wildcards can be added
-later, but omitted HTTP dimensions must not act as implicit wildcards.
+later, but omitted HTTP dimensions must not act as implicit wildcards. The
+`http.request` operation object may contain only `method`, `host`, and `path`.
 
 For v1, `email.send` grants are invalid unless `recipient_domains` is present
 and non-empty. Recipient matching is exact and case-insensitive on the domain

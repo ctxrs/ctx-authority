@@ -93,8 +93,10 @@ keychain adapter. Production code uses the system store; tests use deterministic
 fake stores so the test suite never prompts for real keychain access and never
 requires real credentials.
 
-The configured service name scopes broker-owned entries. The operation
-`secret_ref` is passed as the keychain account name for that service.
+The configured service name scopes broker-owned entries. v1 resolves the trusted
+`default` reference for fake provider execution; action-supplied `secret_ref`
+values are not policy-controlled and must not be honored. Resource-owned secret
+reference mapping is planned.
 
 Reference: https://docs.rs/keyring/latest/keyring/
 

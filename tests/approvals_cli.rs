@@ -1,12 +1,15 @@
 use assert_cmd::Command;
 use authority_broker::approvals::ApprovalProvider;
 use authority_broker::audit::AuditLog;
-use authority_broker::backends::FakeBackend;
-use authority_broker::models::{ActionRequest, PolicyDecision, PolicyDecisionKind, Receipt};
+use authority_broker::backends::{FakeBackend, SecretLease};
+use authority_broker::models::{
+    ActionRequest, PolicyDecision, PolicyDecisionKind, ProviderExecution, Receipt,
+};
 use authority_broker::policy::PolicyDocument;
-use authority_broker::providers::FakeProvider;
+use authority_broker::providers::{FakeProvider, ProviderAdapter};
 use authority_broker::receipts::{action_hash, ReceiptSigner};
 use authority_broker::runtime::BrokerRuntime;
+use authority_broker::{AuthorityError, Result};
 use predicates::prelude::*;
 use std::collections::BTreeMap;
 use std::fs;
@@ -872,6 +875,44 @@ fn receipts_verify_rejects_unsigned_extra_fields() {
 }
 
 #[test]
+fn receipts_verify_rejects_duplicate_json_keys() {
+    let home = tempfile::tempdir().unwrap();
+    let receipt_path = home.path().join("duplicate-key-receipt.json");
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let receipt_text = String::from_utf8(output).unwrap();
+    let duplicate = receipt_text.replacen(
+        r#""redacted": true"#,
+        r#""redacted": false,
+      "redacted": true"#,
+        1,
+    );
+    assert_ne!(duplicate, receipt_text);
+    fs::write(&receipt_path, duplicate).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", receipt_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate JSON key"));
+}
+
+#[test]
 fn init_preserves_existing_config() {
     let home = tempfile::tempdir().unwrap();
 
@@ -944,10 +985,9 @@ fn runtime_audits_provider_failures_after_attempt() {
     let policy_text = fs::read_to_string(fixture("demo-policy.yaml")).unwrap();
     let policy: PolicyDocument = serde_yaml::from_str(&policy_text).unwrap();
     let action_text = fs::read_to_string(fixture("demo-action.json")).unwrap();
-    let mut request: ActionRequest = serde_json::from_str(&action_text).unwrap();
-    request.operation["force_provider_error"] = serde_json::Value::Bool(true);
+    let request: ActionRequest = serde_json::from_str(&action_text).unwrap();
     let approvals = ApprovalProvider::reject();
-    let provider = FakeProvider::new(&request.resource);
+    let provider = FailingProvider;
     let backend = FakeBackend::new(BTreeMap::from([(
         "default".to_string(),
         "fake-secret-value".to_string(),
@@ -970,4 +1010,18 @@ fn runtime_audits_provider_failures_after_attempt() {
         .iter()
         .any(|(_, kind, _)| kind == "execution_attempted"));
     assert!(events.iter().any(|(_, kind, _)| kind == "execution_failed"));
+}
+
+struct FailingProvider;
+
+impl ProviderAdapter for FailingProvider {
+    fn execute(
+        &self,
+        _request: &ActionRequest,
+        _secret: Option<&SecretLease>,
+    ) -> Result<ProviderExecution> {
+        Err(AuthorityError::Provider(
+            "forced fake provider error".into(),
+        ))
+    }
 }

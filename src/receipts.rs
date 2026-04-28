@@ -8,7 +8,11 @@ use base64::Engine;
 use chrono::Utc;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::OsRng;
-use serde::Serialize;
+use serde::{
+    de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
+    Serialize,
+};
+use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 #[cfg(unix)]
@@ -223,9 +227,114 @@ pub fn verify_receipt(receipt: &Receipt, verifying_key: &VerifyingKey) -> Result
         .map_err(|_| AuthorityError::Receipt("receipt signature verification failed".into()))
 }
 
+pub fn receipt_from_json_str_strict(text: &str) -> Result<Receipt> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let value = NoDuplicateJsonValue
+        .deserialize(&mut deserializer)
+        .map_err(AuthorityError::Json)?;
+    deserializer.end().map_err(AuthorityError::Json)?;
+    Ok(serde_json::from_value(value)?)
+}
+
 pub fn payload_hash<T: Serialize>(payload: &T) -> Result<String> {
     let bytes = canonical_json_bytes(payload)?;
     Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
+}
+
+struct NoDuplicateJsonValue;
+
+impl<'de> DeserializeSeed<'de> for NoDuplicateJsonValue {
+    type Value = Value;
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(NoDuplicateJsonValueVisitor)
+    }
+}
+
+struct NoDuplicateJsonValueVisitor;
+
+impl<'de> Visitor<'de> for NoDuplicateJsonValueVisitor {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("valid JSON without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(Value::Number(Number::from(value)))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(Value::Number(Number::from(value)))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Number::from_f64(value)
+            .map(Value::Number)
+            .ok_or_else(|| E::custom("invalid JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(Value::String(value))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        NoDuplicateJsonValue.deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = seq.next_element_seed(NoDuplicateJsonValue)? {
+            values.push(value);
+        }
+        Ok(Value::Array(values))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut object = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if object.contains_key(&key) {
+                return Err(de::Error::custom(format!("duplicate JSON key {key:?}")));
+            }
+            let value = map.next_value_seed(NoDuplicateJsonValue)?;
+            object.insert(key, value);
+        }
+        Ok(Value::Object(object))
+    }
 }
 
 fn receipt_signing_payload(receipt: &Receipt) -> Result<Vec<u8>> {

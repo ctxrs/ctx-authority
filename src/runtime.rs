@@ -121,14 +121,7 @@ impl<'a> BrokerRuntime<'a> {
         }
 
         let secret = match self.secret_backend {
-            Some(backend) => {
-                let reference = request
-                    .operation
-                    .get("secret_ref")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("default");
-                Some(backend.resolve(reference)?)
-            }
+            Some(backend) => Some(backend.resolve("default")?),
             None => None,
         };
         self.audit.record(

@@ -6,8 +6,7 @@
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1",
-    "secret_ref": "default"
+    "path": "/repos/ctx-rs/authority-broker/issues/1"
   },
   "payload": {
     "query": "state:open"

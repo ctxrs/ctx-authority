@@ -187,18 +187,25 @@ impl Grant {
     }
 
     fn matches_http_request(&self, request: &ActionRequest) -> bool {
-        let method = request
-            .operation
+        let Some(operation) = request.operation.as_object() else {
+            return false;
+        };
+        if operation
+            .keys()
+            .any(|key| !matches!(key.as_str(), "method" | "host" | "path"))
+        {
+            return false;
+        }
+
+        let method = operation
             .get("method")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
-        let host = request
-            .operation
+        let host = operation
             .get("host")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
-        let path = request
-            .operation
+        let path = operation
             .get("path")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
