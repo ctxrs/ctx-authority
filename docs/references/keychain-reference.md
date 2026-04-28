@@ -1,11 +1,29 @@
-# macOS Keychain reference notes
+# OS keychain reference notes
 
-macOS Keychain is a likely local backend for early users.
+The OS keychain backend should use the platform keychain through the Rust
+`keyring` crate instead of shelling out to platform commands.
+
+Target stores:
+
+- macOS Keychain
+- Windows Credential Manager
+- Linux Secret Service/libsecret
 
 Implementation requirements:
 
 - no secret value in logs or errors
 - clear permission prompts when the OS requires them
-- deterministic fake backend in tests instead of real Keychain dependency
+- deterministic fake keychain store in tests instead of real keychain access
+- stable service name for broker-owned entries
+- operation `secret_ref` maps to the keychain account within that service
 
-Reference links should be added when implementation begins.
+Testing requirements:
+
+- unit tests must not read or write the real OS keychain
+- tests should use the backend store abstraction with fixture values
+- fake store misses should use generic errors that do not contain secret values
+
+Public references:
+
+- Rust `keyring` crate: https://docs.rs/keyring/latest/keyring/
+- `keyring::Entry`: https://docs.rs/keyring/latest/keyring/struct.Entry.html
