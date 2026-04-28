@@ -61,7 +61,7 @@ The skill is documentation plus examples, not a privileged execution surface.
 - `ResourceHandle`: logical resource such as `github-main` or `mailgun-demo`.
 - `Policy`: rules that allow, deny, or require approval.
 - `ActionRequest`: normalized action proposed by an agent.
-- `ApprovalRequest`: human approval prompt bound to payload hash.
+- `ApprovalRequest`: human approval prompt bound to canonical action hash.
 - `ActionExecution`: provider execution result.
 - `EvidenceBlob`: optional redacted evidence metadata.
 - `Receipt`: signed, tamper-detectable action record.
@@ -103,7 +103,7 @@ receipt should be verifiable offline and should include:
 - agent id
 - action type
 - resource
-- payload hash
+- canonical action hash
 - policy hash/version
 - approval reference when applicable
 - execution status

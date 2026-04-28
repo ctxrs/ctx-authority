@@ -8,6 +8,7 @@ pub type Capability = String;
 pub type ResourceId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentProfile {
     pub id: AgentId,
     #[serde(default)]
@@ -15,6 +16,7 @@ pub struct AgentProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ActionRequest {
     pub id: String,
     pub agent_id: AgentId,
@@ -43,6 +45,7 @@ pub enum PolicyDecisionKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyDecision {
     pub decision: PolicyDecisionKind,
     #[serde(default)]
@@ -52,6 +55,7 @@ pub struct PolicyDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ApprovalRecord {
     pub approval_id: String,
     pub action_request_id: String,
@@ -63,6 +67,7 @@ pub struct ApprovalRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderExecution {
     pub status: String,
     pub provider: String,
@@ -73,6 +78,7 @@ pub struct ProviderExecution {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Receipt {
     pub receipt_version: String,
     pub receipt_id: String,
@@ -92,6 +98,7 @@ pub struct Receipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiptApproval {
     pub required: bool,
     #[serde(default)]
@@ -101,6 +108,7 @@ pub struct ReceiptApproval {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiptSignature {
     pub alg: String,
     pub kid: String,

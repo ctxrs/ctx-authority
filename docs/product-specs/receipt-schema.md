@@ -85,4 +85,5 @@ that happen to share the same payload body.
 `ctxa receipts verify receipt.json` verifies the Ed25519 signature against the
 current local broker key and rejects receipts signed by another key id. It must
 fail closed if the local signing key is missing, the key id differs, the
-signature cannot be decoded, or the receipt body was modified after signing.
+signature cannot be decoded, the receipt contains unknown fields, or the receipt
+body was modified after signing.

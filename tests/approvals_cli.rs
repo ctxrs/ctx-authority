@@ -87,6 +87,46 @@ fn policy_check_denies_when_no_grant_matches() {
 }
 
 #[test]
+fn policy_check_denies_path_prefix_siblings() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("sibling-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_sibling",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues-admin"
+  },
+  "payload": {}
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_returns_require_approval_for_approval_grant() {
     let output = ctxa()
         .args([
@@ -389,6 +429,39 @@ fn receipts_verify_accepts_valid_and_rejects_tampering() {
         .stderr(predicate::str::contains(
             "receipt signature verification failed",
         ));
+}
+
+#[test]
+fn receipts_verify_rejects_unsigned_extra_fields() {
+    let home = tempfile::tempdir().unwrap();
+    let receipt_path = home.path().join("extra-field-receipt.json");
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let mut receipt: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    receipt["unsigned_extra"] = serde_json::Value::String("tampered".into());
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", receipt_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown field"));
 }
 
 #[test]

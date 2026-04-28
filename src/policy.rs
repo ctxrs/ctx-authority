@@ -149,7 +149,7 @@ impl Grant {
                     .allow
                     .path_prefixes
                     .iter()
-                    .any(|prefix| path.starts_with(prefix))
+                    .any(|prefix| path_matches_prefix(path, prefix))
             {
                 return false;
             }
@@ -157,6 +157,13 @@ impl Grant {
 
         true
     }
+}
+
+fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -249,5 +256,21 @@ grants:
         };
         let err = policy.validate().unwrap_err().to_string();
         assert!(err.contains("must specify methods, hosts, and path_prefixes"));
+    }
+
+    #[test]
+    fn http_path_prefixes_match_segment_boundaries() {
+        assert!(path_matches_prefix(
+            "/repos/example/repo/issues",
+            "/repos/example/repo/issues"
+        ));
+        assert!(path_matches_prefix(
+            "/repos/example/repo/issues/1",
+            "/repos/example/repo/issues"
+        ));
+        assert!(!path_matches_prefix(
+            "/repos/example/repo/issues-admin",
+            "/repos/example/repo/issues"
+        ));
     }
 }
