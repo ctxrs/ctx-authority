@@ -55,11 +55,15 @@ pub struct AgentConfig {
     pub id: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConfig {
+    pub id: String,
     pub path: String,
+    pub hash: String,
 }
 
 impl AppConfig {

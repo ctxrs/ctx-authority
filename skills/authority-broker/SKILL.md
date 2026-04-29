@@ -13,12 +13,15 @@ Request capabilities, not secrets.
 ## Common commands
 
 ```bash
-ctxa action request --policy <policy.yaml> --file <action.json>
+ctxa action request --file <action.json>
 ctxa policy check --policy <policy.yaml> --file <action.json>
 ctxa log
 ctxa receipts verify <receipt.json>
 ctxa mcp serve
 ```
+
+`ctxa action request` uses the human-configured trusted policy and agent profile
+from local broker config. Do not supply your own policy path for execution.
 
 ## MCP tools
 

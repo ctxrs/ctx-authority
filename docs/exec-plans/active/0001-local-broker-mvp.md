@@ -36,7 +36,9 @@ provider credentials.
 The MVP is ready when:
 
 - `ctxa init` creates local config.
-- `ctxa agent create demo` creates an agent profile.
+- `ctxa policy trust --id default --path policy.yaml` pins a policy hash.
+- `ctxa agent create demo --policy default` creates an executable trusted agent
+  profile.
 - allowed fake action succeeds.
 - denied fake action does not reach provider.
 - risky fake action asks for approval and fails closed without a configured

@@ -30,11 +30,12 @@ run_ctxa() {
 }
 
 run_ctxa init init
-run_ctxa agent_create agent create demo
+run_ctxa policy_trust policy trust --id default --path tests/fixtures/demo-policy.yaml
+run_ctxa agent_create agent create demo --policy default
 run_ctxa policy_check policy check --policy tests/fixtures/demo-policy.yaml --file tests/fixtures/demo-action.json
 cp "$tmp/policy_check.stdout" "$tmp/decision.json"
 grep -q '"decision": "allow"' "$tmp/decision.json"
-run_ctxa action_request action request --policy tests/fixtures/demo-policy.yaml --file tests/fixtures/demo-action.json
+run_ctxa action_request action request --file tests/fixtures/demo-action.json
 cp "$tmp/action_request.stdout" "$tmp/receipt.json"
 grep -q '"receipt_version": "authority.receipt.v1"' "$tmp/receipt.json"
 run_ctxa receipt_verify receipts verify "$tmp/receipt.json"

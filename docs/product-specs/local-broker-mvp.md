@@ -15,7 +15,7 @@ not want to expose durable raw secrets to the agent.
 2. User creates an agent profile.
 3. User configures a secret backend.
 4. User configures provider resources.
-5. User writes policy.
+5. User writes and trusts a policy.
 6. Agent requests an action through CLI.
 7. Broker evaluates policy.
 8. Broker denies, allows, or requests approval.
@@ -29,13 +29,19 @@ Candidate commands:
 
 ```bash
 ctxa init
-ctxa agent create demo
+ctxa policy trust --id default --path policy.yaml
+ctxa agent create demo --policy default
 ctxa policy check --policy policy.yaml --file action.json
-ctxa action request --policy policy.yaml --file action.json
+ctxa action request --file action.json
 ctxa log
 ctxa receipts verify receipt.json
 ctxa mcp serve
 ```
+
+`policy check` is a diagnostic surface and may take an explicit policy path.
+`action request` is an execution surface and must use the trusted policy attached
+to the configured local agent profile; agents must not supply policy paths at
+execution time.
 
 The current MCP server exposes metadata and structural receipt verification.
 MCP action execution and approval polling are planned follow-ups.

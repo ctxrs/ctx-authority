@@ -28,7 +28,7 @@ Real provider adapters and hosted services are intentionally not included yet.
 - Minimal MCP server.
 - Agent-agnostic skill/instruction pack.
 - Local YAML policies.
-- Agent profiles.
+- Trusted local policy attachment to agent profiles.
 - Pluggable secret backends.
   - fake backend
   - `.env`

@@ -10,6 +10,7 @@ use chrono::Utc;
 use serde_json::json;
 
 pub struct BrokerRuntime<'a> {
+    pub trusted_agent_id: &'a str,
     pub policy: &'a PolicyDocument,
     pub audit: &'a AuditLog,
     pub approvals: &'a ApprovalProvider,
@@ -29,7 +30,9 @@ impl<'a> BrokerRuntime<'a> {
             }
         }
         let policy_hash = self.policy.hash()?;
-        let decision = self.policy.evaluate(request)?;
+        let decision = self
+            .policy
+            .evaluate_for_agent(self.trusted_agent_id, request)?;
         self.audit.record(
             "policy_decision",
             &json!({

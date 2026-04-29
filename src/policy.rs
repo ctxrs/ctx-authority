@@ -56,7 +56,25 @@ impl PolicyDocument {
     }
 
     pub fn evaluate(&self, request: &ActionRequest) -> Result<PolicyDecision> {
+        self.evaluate_for_agent(&request.agent_id, request)
+    }
+
+    pub fn evaluate_for_agent(
+        &self,
+        trusted_agent_id: &str,
+        request: &ActionRequest,
+    ) -> Result<PolicyDecision> {
         self.validate()?;
+        if request.agent_id != trusted_agent_id {
+            return Ok(PolicyDecision {
+                decision: PolicyDecisionKind::Deny,
+                reasons: vec![format!(
+                    "action agent_id {} does not match trusted agent {}",
+                    request.agent_id, trusted_agent_id
+                )],
+                matched_grants: vec![],
+            });
+        }
         if !is_supported_capability(&request.capability) {
             return Ok(PolicyDecision {
                 decision: PolicyDecisionKind::Deny,
@@ -69,7 +87,7 @@ impl PolicyDocument {
         let mut approval = false;
 
         for grant in &self.grants {
-            if !grant.matches(request) {
+            if !grant.matches(trusted_agent_id, request) {
                 continue;
             }
             matched.push(grant.id.clone());
@@ -186,8 +204,8 @@ impl Grant {
         Ok(())
     }
 
-    fn matches(&self, request: &ActionRequest) -> bool {
-        if self.agent != request.agent_id
+    fn matches(&self, trusted_agent_id: &str, request: &ActionRequest) -> bool {
+        if self.agent != trusted_agent_id
             || self.capability != request.capability
             || self.resource != request.resource
         {

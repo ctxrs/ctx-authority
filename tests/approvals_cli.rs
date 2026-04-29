@@ -26,6 +26,30 @@ fn ctxa() -> Command {
     Command::cargo_bin("ctxa").expect("ctxa binary")
 }
 
+fn configure_trusted_agent(home: &Path, policy_fixture: &str) {
+    configure_trusted_agent_path(home, &fixture(policy_fixture));
+}
+
+fn configure_trusted_agent_path(home: &Path, policy_path: &Path) {
+    ctxa()
+        .env("CTXA_HOME", home)
+        .args([
+            "policy",
+            "trust",
+            "--id",
+            "default",
+            "--path",
+            policy_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home)
+        .args(["agent", "create", "demo", "--policy", "default"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn policy_check_allows_matching_grant() {
     let output = ctxa()
@@ -319,13 +343,12 @@ fn policy_check_returns_require_approval_for_approval_grant() {
 #[test]
 fn action_request_runs_allowed_action_without_approval_record() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let output = ctxa()
         .env("CTXA_HOME", home.path())
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("demo-action.json").to_str().unwrap(),
         ])
@@ -343,13 +366,12 @@ fn action_request_runs_allowed_action_without_approval_record() {
 #[test]
 fn action_request_requires_explicit_approval_provider_by_default() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "approval-required-policy.yaml");
     ctxa()
         .env("CTXA_HOME", home.path())
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("approval-required-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("approval-required-action.json").to_str().unwrap(),
         ])
@@ -374,13 +396,12 @@ fn action_request_requires_explicit_approval_provider_by_default() {
 #[test]
 fn action_request_does_not_accept_caller_controlled_approval() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "approval-required-policy.yaml");
     ctxa()
         .env("CTXA_HOME", home.path())
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("approval-required-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("approval-required-action.json").to_str().unwrap(),
             "--approval",
@@ -393,14 +414,13 @@ fn action_request_does_not_accept_caller_controlled_approval() {
 #[test]
 fn action_request_ignores_caller_controlled_approval_env() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "approval-required-policy.yaml");
     ctxa()
         .env("CTXA_HOME", home.path())
         .env("CTXA_APPROVAL_MODE", "approve")
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("approval-required-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("approval-required-action.json").to_str().unwrap(),
         ])
@@ -425,6 +445,7 @@ fn runtime_can_use_internal_test_approval_provider() {
     )]));
     let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
     let runtime = BrokerRuntime {
+        trusted_agent_id: &request.agent_id,
         policy: &policy,
         audit: &audit,
         approvals: &approvals,
@@ -446,6 +467,7 @@ fn runtime_can_use_internal_test_approval_provider() {
 #[test]
 fn action_request_rejects_mismatched_supplied_payload_hash() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let temp = tempfile::tempdir().unwrap();
     let mut action: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(fixture("demo-action.json")).unwrap()).unwrap();
@@ -455,19 +477,94 @@ fn action_request_rejects_mismatched_supplied_payload_hash() {
 
     ctxa()
         .env("CTXA_HOME", home.path())
-        .args([
-            "action",
-            "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
-            "--file",
-            action_path.to_str().unwrap(),
-        ])
+        .args(["action", "request", "--file", action_path.to_str().unwrap()])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
             "payload_hash does not match canonical action",
         ));
+}
+
+#[test]
+fn action_request_requires_trusted_policy_config() {
+    let home = tempfile::tempdir().unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no trusted executable agent is configured",
+        ));
+}
+
+#[test]
+fn action_request_rejects_untrusted_agent_id_in_action() {
+    let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
+    let temp = tempfile::tempdir().unwrap();
+    let mut action: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fixture("demo-action.json")).unwrap()).unwrap();
+    action["agent_id"] = serde_json::Value::String("other-agent".into());
+    let action_path = temp.path().join("impersonation-action.json");
+    fs::write(&action_path, serde_json::to_string_pretty(&action).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["action", "request", "--file", action_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not match trusted agent"));
+}
+
+#[test]
+fn action_request_rejects_modified_trusted_policy_hash() {
+    let home = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let policy_path = temp.path().join("trusted-policy.yaml");
+    fs::write(
+        &policy_path,
+        fs::read_to_string(fixture("demo-policy.yaml")).unwrap(),
+    )
+    .unwrap();
+    configure_trusted_agent_path(home.path(), &policy_path);
+    fs::write(
+        &policy_path,
+        r#"
+version: 1
+grants:
+  - id: changed_after_trust
+    agent: demo
+    capability: http.request
+    resource: fake-github
+    allow:
+      methods: [GET]
+      hosts: [api.fake-github.local]
+      path_prefixes: [/repos/ctx-rs/authority-broker]
+"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("trusted policy")
+                .and(predicate::str::contains("hash changed")),
+        );
 }
 
 #[test]
@@ -877,6 +974,7 @@ grants:
 #[test]
 fn receipts_verify_accepts_valid_and_rejects_tampering() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let receipt_path = home.path().join("receipt.json");
     let tampered_path = home.path().join("tampered-receipt.json");
 
@@ -885,8 +983,6 @@ fn receipts_verify_accepts_valid_and_rejects_tampering() {
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("demo-action.json").to_str().unwrap(),
         ])
@@ -921,6 +1017,7 @@ fn receipts_verify_accepts_valid_and_rejects_tampering() {
 #[test]
 fn receipts_verify_rejects_unsigned_extra_fields() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let receipt_path = home.path().join("extra-field-receipt.json");
 
     let output = ctxa()
@@ -928,8 +1025,6 @@ fn receipts_verify_rejects_unsigned_extra_fields() {
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("demo-action.json").to_str().unwrap(),
         ])
@@ -954,6 +1049,7 @@ fn receipts_verify_rejects_unsigned_extra_fields() {
 #[test]
 fn receipts_verify_rejects_missing_signed_null_fields() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let receipt_path = home.path().join("missing-signed-field-receipt.json");
 
     let output = ctxa()
@@ -961,8 +1057,6 @@ fn receipts_verify_rejects_missing_signed_null_fields() {
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("demo-action.json").to_str().unwrap(),
         ])
@@ -989,6 +1083,7 @@ fn receipts_verify_rejects_missing_signed_null_fields() {
 #[test]
 fn receipts_verify_rejects_duplicate_json_keys() {
     let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
     let receipt_path = home.path().join("duplicate-key-receipt.json");
 
     let output = ctxa()
@@ -996,8 +1091,6 @@ fn receipts_verify_rejects_duplicate_json_keys() {
         .args([
             "action",
             "request",
-            "--policy",
-            fixture("demo-policy.yaml").to_str().unwrap(),
             "--file",
             fixture("demo-action.json").to_str().unwrap(),
         ])
@@ -1064,6 +1157,7 @@ fn runtime_rejects_approval_bound_to_changed_payload() {
     )]));
     let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
     let runtime = BrokerRuntime {
+        trusted_agent_id: &request.agent_id,
         policy: &policy,
         audit: &audit,
         approvals: &approvals,
@@ -1092,6 +1186,7 @@ fn runtime_rejects_expired_approvals_before_execution() {
     )]));
     let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
     let runtime = BrokerRuntime {
+        trusted_agent_id: &request.agent_id,
         policy: &policy,
         audit: &audit,
         approvals: &approvals,
@@ -1147,6 +1242,7 @@ fn runtime_audits_provider_failures_after_attempt() {
     )]));
     let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
     let runtime = BrokerRuntime {
+        trusted_agent_id: &request.agent_id,
         policy: &policy,
         audit: &audit,
         approvals: &approvals,
@@ -1184,6 +1280,7 @@ fn runtime_returns_receipt_when_final_audit_write_fails_after_execution() {
     )]));
     let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
     let runtime = BrokerRuntime {
+        trusted_agent_id: &request.agent_id,
         policy: &policy,
         audit: &audit,
         approvals: &approvals,
