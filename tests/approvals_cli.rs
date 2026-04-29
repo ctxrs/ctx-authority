@@ -952,6 +952,41 @@ fn receipts_verify_rejects_unsigned_extra_fields() {
 }
 
 #[test]
+fn receipts_verify_rejects_missing_signed_null_fields() {
+    let home = tempfile::tempdir().unwrap();
+    let receipt_path = home.path().join("missing-signed-field-receipt.json");
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let mut receipt: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    receipt.as_object_mut().unwrap().remove("approval");
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", receipt_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "receipt missing signed field approval",
+        ));
+}
+
+#[test]
 fn receipts_verify_rejects_duplicate_json_keys() {
     let home = tempfile::tempdir().unwrap();
     let receipt_path = home.path().join("duplicate-key-receipt.json");

@@ -60,14 +60,16 @@ fn handle_message(message: Value) -> Option<Value> {
 }
 
 fn handle_initialize(id: Value, message: &Value) -> Value {
-    if let Some(requested_protocol_version) = message
+    let Some(requested_protocol_version) = message
         .get("params")
         .and_then(|params| params.get("protocolVersion"))
         .and_then(Value::as_str)
-    {
-        if requested_protocol_version != MCP_PROTOCOL_VERSION {
-            return error_response(id, -32602, "unsupported MCP protocol version");
-        }
+    else {
+        return error_response(id, -32602, "missing MCP protocol version");
+    };
+
+    if requested_protocol_version != MCP_PROTOCOL_VERSION {
+        return error_response(id, -32602, "unsupported MCP protocol version");
     }
 
     success_response(
@@ -338,6 +340,26 @@ mod tests {
             response["error"]["message"],
             "unsupported MCP protocol version"
         );
+    }
+
+    #[test]
+    fn initialize_rejects_missing_protocol_version() {
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "smoke",
+                    "version": "0.0.0"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(response["error"]["message"], "missing MCP protocol version");
     }
 
     #[test]

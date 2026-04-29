@@ -20,9 +20,9 @@ Implemented tools:
 - `capabilities.list`
 - `receipts.verify`
 
-`initialize` accepts only protocol version `2025-11-25`. Requests for any other
-protocol version fail with a JSON-RPC invalid-params error instead of silently
-negotiating unsupported behavior.
+`initialize` requires protocol version `2025-11-25`. Requests with a missing or
+different protocol version fail with a JSON-RPC invalid-params error instead of
+silently negotiating unsupported behavior.
 
 `receipts.verify` currently performs structural verification only: it checks
 that the receipt parses into the local receipt schema and includes a supported

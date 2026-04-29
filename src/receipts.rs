@@ -233,7 +233,72 @@ pub fn receipt_from_json_str_strict(text: &str) -> Result<Receipt> {
         .deserialize(&mut deserializer)
         .map_err(AuthorityError::Json)?;
     deserializer.end().map_err(AuthorityError::Json)?;
+    require_signed_receipt_fields(&value)?;
     Ok(serde_json::from_value(value)?)
+}
+
+fn require_signed_receipt_fields(value: &Value) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| AuthorityError::Receipt("receipt must be a JSON object".into()))?;
+
+    for field in [
+        "receipt_version",
+        "receipt_id",
+        "principal",
+        "agent",
+        "task",
+        "action",
+        "resource",
+        "payload_hash",
+        "policy_hash",
+        "approval",
+        "execution",
+        "issued_at",
+        "signature",
+    ] {
+        require_object_field(object, field, "receipt")?;
+    }
+
+    let execution = object
+        .get("execution")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AuthorityError::Receipt("receipt execution must be an object".into()))?;
+    for field in ["status", "provider", "provider_request_id", "result"] {
+        require_object_field(execution, field, "receipt execution")?;
+    }
+
+    if let Some(approval) = object
+        .get("approval")
+        .filter(|approval| !approval.is_null())
+    {
+        let approval = approval.as_object().ok_or_else(|| {
+            AuthorityError::Receipt("receipt approval must be null or an object".into())
+        })?;
+        for field in ["required", "approved_by", "approved_at"] {
+            require_object_field(approval, field, "receipt approval")?;
+        }
+    }
+
+    let signature = object
+        .get("signature")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AuthorityError::Receipt("receipt signature must be an object".into()))?;
+    for field in ["alg", "kid", "sig"] {
+        require_object_field(signature, field, "receipt signature")?;
+    }
+
+    Ok(())
+}
+
+fn require_object_field(object: &Map<String, Value>, field: &str, context: &str) -> Result<()> {
+    if object.contains_key(field) {
+        Ok(())
+    } else {
+        Err(AuthorityError::Receipt(format!(
+            "{context} missing signed field {field}"
+        )))
+    }
 }
 
 pub fn payload_hash<T: Serialize>(payload: &T) -> Result<String> {
@@ -395,6 +460,46 @@ mod tests {
         let mut tampered = receipt;
         tampered.execution.status = "failed".into();
         assert!(signer.verify_local_receipt(&tampered).is_err());
+    }
+
+    #[test]
+    fn strict_receipt_parse_rejects_missing_signed_null_fields() {
+        let signer = ReceiptSigner::deterministic_for_tests([7; 32]);
+        let request = ActionRequest {
+            id: "act".into(),
+            agent_id: "demo".into(),
+            task_id: None,
+            capability: "fake.action".into(),
+            resource: "fake".into(),
+            operation: json!({}),
+            payload: json!({"x": 1}),
+            payload_hash: None,
+            idempotency_key: None,
+            requested_at: None,
+        };
+        let receipt = signer
+            .issue(
+                "local".into(),
+                &request,
+                payload_hash(&request.payload).unwrap(),
+                "sha256:policy".into(),
+                None,
+                ProviderExecution {
+                    status: "succeeded".into(),
+                    provider: "fake".into(),
+                    provider_request_id: None,
+                    result: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        let mut receipt_value = serde_json::to_value(&receipt).unwrap();
+        receipt_value.as_object_mut().unwrap().remove("task");
+        let missing_task = serde_json::to_string(&receipt_value).unwrap();
+
+        let err = receipt_from_json_str_strict(&missing_task)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing signed field task"), "{err}");
     }
 
     #[test]
