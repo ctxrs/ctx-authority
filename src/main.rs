@@ -4,12 +4,12 @@ use ctxa::audit::AuditLog;
 use ctxa::boundary::action_request_from_json_str;
 use ctxa::config::{
     AgentConfig, AppConfig, AppPaths, HttpAllowConfig, HttpAuthConfig, HttpResourceConfig,
-    PolicyConfig, ProfileConfig,
+    HttpResourceScheme, PolicyConfig, ProfileConfig,
 };
 use ctxa::execution_context::{load_policy_file, ExecutionContext};
 use ctxa::models::ActionRequest;
 use ctxa::policy::PolicyDocument;
-use ctxa::proxy::{ProxyConfig, ProxyServer};
+use ctxa::proxy::{can_create_process_ca_file, profile_allows_url, ProxyConfig, ProxyServer};
 use ctxa::receipts::{receipt_from_json_str_strict, ReceiptSigner};
 use std::fs;
 use std::path::PathBuf;
@@ -37,6 +37,18 @@ enum Command {
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
+    },
+    Proposals {
+        #[command(subcommand)]
+        command: ProposalCommand,
+    },
+    Ca {
+        #[command(subcommand)]
+        command: CaCommand,
+    },
+    Doctor {
+        #[arg(long)]
+        profile: Option<String>,
     },
     Action {
         #[command(subcommand)]
@@ -107,6 +119,26 @@ enum ProfileCommand {
         #[arg(long = "path-prefix", required = true)]
         path_prefixes: Vec<String>,
     },
+    AddHttps {
+        profile: String,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        secret_ref: String,
+        #[arg(long = "allow-method", required = true)]
+        allow_methods: Vec<String>,
+        #[arg(long = "path-prefix", required = true)]
+        path_prefixes: Vec<String>,
+    },
+    Test {
+        profile: String,
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -115,6 +147,19 @@ enum ActionCommand {
         #[arg(long)]
         file: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProposalCommand {
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CaCommand {
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -134,6 +179,9 @@ fn main() -> anyhow::Result<()> {
         Command::Agent { command } => agent(command),
         Command::Policy { command } => policy(command),
         Command::Profile { command } => profile(command),
+        Command::Proposals { command } => proposals(command),
+        Command::Ca { command } => ca(command),
+        Command::Doctor { profile } => doctor(profile),
         Command::Action { command } => action(command),
         Command::Run { profile, command } => run(profile, command),
         Command::Receipts { command } => receipts(command),
@@ -171,39 +219,94 @@ fn profile(command: ProfileCommand) -> anyhow::Result<()> {
             secret_ref,
             allow_methods,
             path_prefixes,
-        } => {
-            let paths = AppPaths::discover()?;
-            paths.ensure()?;
-            let mut config = AppConfig::load(&paths.config_file)?;
-            let profile_config = config
-                .profile_mut(&profile)
-                .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
-            let resource = HttpResourceConfig {
-                id: id.clone(),
-                host,
-                secret_ref,
-                auth: HttpAuthConfig::default(),
-                allow: HttpAllowConfig {
-                    methods: allow_methods
-                        .into_iter()
-                        .map(|method| method.to_ascii_uppercase())
-                        .collect(),
-                    path_prefixes,
-                },
-            };
-            if let Some(existing) = profile_config
-                .http_resources
-                .iter_mut()
-                .find(|resource| resource.id == id)
-            {
-                *existing = resource;
-            } else {
-                profile_config.http_resources.push(resource);
-            }
-            config.save(&paths.config_file)?;
-            println!("http resource {id} on profile {profile}");
+        } => add_profile_resource(
+            profile,
+            id,
+            HttpResourceScheme::Http,
+            host,
+            secret_ref,
+            allow_methods,
+            path_prefixes,
+        ),
+        ProfileCommand::AddHttps {
+            profile,
+            id,
+            host,
+            secret_ref,
+            allow_methods,
+            path_prefixes,
+        } => add_profile_resource(
+            profile,
+            id,
+            HttpResourceScheme::Https,
+            host,
+            secret_ref,
+            allow_methods,
+            path_prefixes,
+        ),
+        ProfileCommand::Test {
+            profile,
+            url,
+            method,
+        } => profile_test(profile, method, url),
+    }
+}
+
+fn add_profile_resource(
+    profile: String,
+    id: String,
+    scheme: HttpResourceScheme,
+    host: String,
+    secret_ref: String,
+    allow_methods: Vec<String>,
+    path_prefixes: Vec<String>,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    let profile_config = config
+        .profile_mut(&profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
+    let resource = HttpResourceConfig {
+        id: id.clone(),
+        scheme,
+        host,
+        secret_ref,
+        auth: HttpAuthConfig::default(),
+        allow: HttpAllowConfig {
+            methods: allow_methods
+                .into_iter()
+                .map(|method| method.to_ascii_uppercase())
+                .collect(),
+            path_prefixes,
+        },
+    };
+    if let Some(existing) = profile_config
+        .http_resources
+        .iter_mut()
+        .find(|resource| resource.id == id)
+    {
+        *existing = resource;
+    } else {
+        profile_config.http_resources.push(resource);
+    }
+    config.save(&paths.config_file)?;
+    println!("{} resource {id} on profile {profile}", scheme_name(scheme));
+    Ok(())
+}
+
+fn profile_test(profile: String, method: String, url: String) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    let profile_config = config
+        .profile(&profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
+    match profile_allows_url(profile_config, &method, &url)? {
+        Some(resource) => {
+            println!("allowed resource={resource}");
             Ok(())
         }
+        None => anyhow::bail!("denied by profile {profile}"),
     }
 }
 
@@ -230,8 +333,10 @@ fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
         secret_backend: Arc::from(secret_backend),
         audit: AuditLog::open(&paths.audit_db)?,
         signer: ReceiptSigner::load_or_create(&paths)?,
+        upstream_root_certs_pem: Vec::new(),
     })?;
     let proxy_url = proxy.proxy_url();
+    let ca_cert_path = proxy.ca_cert_path().to_path_buf();
     let mut child = ProcessCommand::new(&command[0]);
     child.args(&command[1..]);
     for (key, value) in &profile.env_vars {
@@ -243,10 +348,15 @@ fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
         .env("CTXA_PROXY_TOKEN", proxy.token())
         .env("HTTP_PROXY", &proxy_url)
         .env("http_proxy", &proxy_url)
+        .env("HTTPS_PROXY", &proxy_url)
+        .env("https_proxy", &proxy_url)
+        .env("SSL_CERT_FILE", &ca_cert_path)
+        .env("REQUESTS_CA_BUNDLE", &ca_cert_path)
+        .env("CURL_CA_BUNDLE", &ca_cert_path)
+        .env("NODE_EXTRA_CA_CERTS", &ca_cert_path)
+        .env("GIT_SSL_CAINFO", &ca_cert_path)
         .env("NO_PROXY", "")
         .env("no_proxy", "")
-        .env_remove("HTTPS_PROXY")
-        .env_remove("https_proxy")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy");
     let status = child
@@ -254,6 +364,65 @@ fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
         .with_context(|| format!("failed to run {}", command[0]))?;
     proxy.stop();
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn doctor(profile: Option<String>) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    println!("config ok {}", paths.config_file.display());
+    if let Some(secret_backend) = &config.secret_backend {
+        let _backend = secret_backend.build()?;
+        println!(
+            "secret backend ok {}",
+            serde_json::to_string(&secret_backend.kind())?.trim_matches('"')
+        );
+    } else {
+        println!("secret backend not configured");
+    }
+    can_create_process_ca_file()?;
+    println!("process CA ok");
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    println!("proxy bind ok {}", listener.local_addr()?);
+    drop(listener);
+    if let Some(profile_id) = profile {
+        let profile = config
+            .profile(&profile_id)
+            .ok_or_else(|| anyhow::anyhow!("profile {profile_id} is not configured"))?;
+        profile.validate()?;
+        println!("profile ok {profile_id}");
+    }
+    Ok(())
+}
+
+fn proposals(command: ProposalCommand) -> anyhow::Result<()> {
+    match command {
+        ProposalCommand::List { limit } => {
+            let paths = AppPaths::discover()?;
+            let audit = AuditLog::open(&paths.audit_db)?;
+            for (at, data) in audit.list_kind("proxy_request_proposal", limit)? {
+                println!("{at} {}", serde_json::to_string(&data)?);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn ca(command: CaCommand) -> anyhow::Result<()> {
+    match command {
+        CaCommand::Status => {
+            can_create_process_ca_file()?;
+            println!("process-scoped CA is generated per ctxa run; no persistent CA is installed");
+            Ok(())
+        }
+    }
+}
+
+fn scheme_name(scheme: HttpResourceScheme) -> &'static str {
+    match scheme {
+        HttpResourceScheme::Http => "http",
+        HttpResourceScheme::Https => "https",
+    }
 }
 
 fn init() -> anyhow::Result<()> {

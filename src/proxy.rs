@@ -1,21 +1,29 @@
 use crate::audit::AuditLog;
 use crate::backends::SecretBackend;
-use crate::config::{canonical_host_port, HttpAuthType, HttpResourceConfig, ProfileConfig};
+use crate::config::{
+    canonical_host_port_for_scheme, HttpAuthType, HttpResourceConfig, HttpResourceScheme,
+    ProfileConfig,
+};
 use crate::models::{ActionRequest, ProviderExecution, Receipt};
 use crate::policy::http_path_matches_prefix;
 use crate::receipts::{payload_hash, ReceiptSigner};
 use crate::{AuthorityError, Result};
 use base64::Engine;
+use rcgen::{
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyUsagePurpose, SanType,
+};
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
@@ -30,11 +38,14 @@ pub struct ProxyConfig {
     pub secret_backend: Arc<dyn SecretBackend>,
     pub audit: AuditLog,
     pub signer: ReceiptSigner,
+    pub upstream_root_certs_pem: Vec<Vec<u8>>,
 }
 
 pub struct ProxyServer {
     address: SocketAddr,
     token: String,
+    ca_cert_file: NamedTempFile,
+    ca: Arc<LocalCa>,
     shutdown: Option<mpsc::Sender<()>>,
     thread: Option<JoinHandle<()>>,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -47,11 +58,13 @@ impl ProxyServer {
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
         let token = Uuid::new_v4().to_string();
+        let (ca, ca_cert_file) = LocalCa::generate()?;
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
         let workers = Arc::new(Mutex::new(Vec::new()));
         let state = Arc::new(ProxyState {
             config,
             token: token.clone(),
+            ca: Arc::clone(&ca),
             in_flight: AtomicUsize::new(0),
             workers: Arc::clone(&workers),
         });
@@ -59,6 +72,8 @@ impl ProxyServer {
         Ok(Self {
             address,
             token,
+            ca_cert_file,
+            ca,
             shutdown: Some(shutdown_tx),
             thread: Some(thread),
             workers,
@@ -75,6 +90,14 @@ impl ProxyServer {
 
     pub fn proxy_url(&self) -> String {
         format!("http://ctxa:{}@{}", self.token, self.address)
+    }
+
+    pub fn ca_cert_path(&self) -> &std::path::Path {
+        self.ca_cert_file.path()
+    }
+
+    pub fn ca_cert_pem(&self) -> &str {
+        self.ca.ca_cert_pem()
     }
 
     pub fn stop(mut self) {
@@ -105,8 +128,111 @@ impl Drop for ProxyServer {
 struct ProxyState {
     config: ProxyConfig,
     token: String,
+    ca: Arc<LocalCa>,
     in_flight: AtomicUsize,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+pub fn can_create_process_ca_file() -> Result<()> {
+    let (_ca, _file) = LocalCa::generate()?;
+    Ok(())
+}
+
+struct LocalCa {
+    certificate: Mutex<Certificate>,
+    ca_der: Vec<u8>,
+    ca_cert_pem: String,
+    server_configs: Mutex<BTreeMap<String, Arc<rustls::ServerConfig>>>,
+}
+
+impl LocalCa {
+    fn generate() -> Result<(Arc<Self>, NamedTempFile)> {
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "ctxa local proxy");
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::CrlSign,
+        ];
+        let certificate = Certificate::from_params(params)
+            .map_err(|_| AuthorityError::Config("failed to create local CA".into()))?;
+        let ca_cert_pem = certificate
+            .serialize_pem()
+            .map_err(|_| AuthorityError::Config("failed to serialize local CA".into()))?;
+        let ca_der = certificate
+            .serialize_der()
+            .map_err(|_| AuthorityError::Config("failed to serialize local CA".into()))?;
+        let mut ca_cert_file = NamedTempFile::new()?;
+        ca_cert_file.write_all(ca_cert_pem.as_bytes())?;
+        ca_cert_file.flush()?;
+        Ok((
+            Arc::new(Self {
+                certificate: Mutex::new(certificate),
+                ca_der,
+                ca_cert_pem,
+                server_configs: Mutex::new(BTreeMap::new()),
+            }),
+            ca_cert_file,
+        ))
+    }
+
+    fn ca_cert_pem(&self) -> &str {
+        &self.ca_cert_pem
+    }
+
+    fn server_config_for_host(&self, host: &str) -> Result<Arc<rustls::ServerConfig>> {
+        if let Ok(cache) = self.server_configs.lock() {
+            if let Some(config) = cache.get(host) {
+                return Ok(Arc::clone(config));
+            }
+        }
+        let config = Arc::new(self.build_server_config(host)?);
+        let mut cache = self
+            .server_configs
+            .lock()
+            .map_err(|_| AuthorityError::Config("local CA cache unavailable".into()))?;
+        Ok(Arc::clone(cache.entry(host.to_string()).or_insert(config)))
+    }
+
+    fn build_server_config(&self, host: &str) -> Result<rustls::ServerConfig> {
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params.distinguished_name.push(DnType::CommonName, host);
+        params.is_ca = IsCa::NoCa;
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        params.subject_alt_names = match host.parse::<IpAddr>() {
+            Ok(ip) => vec![SanType::IpAddress(ip)],
+            Err(_) => vec![SanType::DnsName(host.to_string())],
+        };
+        let leaf = Certificate::from_params(params)
+            .map_err(|_| AuthorityError::Config("failed to create leaf certificate".into()))?;
+        let ca = self
+            .certificate
+            .lock()
+            .map_err(|_| AuthorityError::Config("local CA unavailable".into()))?;
+        let leaf_der = leaf
+            .serialize_der_with_signer(&ca)
+            .map_err(|_| AuthorityError::Config("failed to sign leaf certificate".into()))?;
+        let leaf_key = leaf.serialize_private_key_der();
+        let mut config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![
+                    rustls::Certificate(leaf_der),
+                    rustls::Certificate(self.ca_der.clone()),
+                ],
+                rustls::PrivateKey(leaf_key),
+            )
+            .map_err(|_| AuthorityError::Config("failed to build TLS server config".into()))?;
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Ok(config)
+    }
 }
 
 fn accept_loop(listener: TcpListener, state: Arc<ProxyState>, shutdown_rx: mpsc::Receiver<()>) {
@@ -147,6 +273,7 @@ fn accept_loop(listener: TcpListener, state: Arc<ProxyState>, shutdown_rx: mpsc:
 }
 
 fn handle_connection(mut stream: TcpStream, state: &ProxyState) {
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     match handle_request(&mut stream, state) {
@@ -158,21 +285,31 @@ fn handle_connection(mut stream: TcpStream, state: &ProxyState) {
             audit_kind,
             audit_data,
         }) => {
-            let (kind, data) = audit_kind
-                .map(|kind| (kind, audit_data))
-                .unwrap_or_else(|| {
-                    (
-                        "proxy_request_rejected".into(),
-                        json!({
-                            "status": status,
-                            "reason": body,
-                        }),
-                    )
-                });
-            let _ = state.config.audit.record(&kind, &data);
+            record_failure(state, status, &body, audit_kind, audit_data);
             let _ = write_simple_response(&mut stream, status, &reason, &body);
         }
     }
+}
+
+fn record_failure(
+    state: &ProxyState,
+    status: u16,
+    body: &str,
+    audit_kind: Option<String>,
+    audit_data: serde_json::Value,
+) {
+    let (kind, data) = audit_kind
+        .map(|kind| (kind, audit_data))
+        .unwrap_or_else(|| {
+            (
+                "proxy_request_rejected".into(),
+                json!({
+                    "status": status,
+                    "reason": body,
+                }),
+            )
+        });
+    let _ = state.config.audit.record(&kind, &data);
 }
 
 fn handle_request(
@@ -190,13 +327,7 @@ fn handle_request(
         ));
     }
     if request.method.eq_ignore_ascii_case("CONNECT") {
-        return Err(ProxyFailure::new(
-            501,
-            "Not Implemented",
-            "CONNECT is not supported by this local proxy",
-            Some("proxy_request_rejected"),
-            json!({"reason": "connect_not_supported"}),
-        ));
+        return handle_connect_request(stream, state, request);
     }
     let method = canonical_method(&request.method).map_err(|failure| {
         failure.with_audit(
@@ -204,18 +335,178 @@ fn handle_request(
             json!({"reason": "invalid_method"}),
         )
     })?;
-    let target = parse_absolute_http_target(&request.target).map_err(|failure| {
+    let target =
+        parse_absolute_target(&request.target, HttpResourceScheme::Http).map_err(|failure| {
+            failure.with_audit(
+                "proxy_request_rejected",
+                json!({"reason": "invalid_target"}),
+            )
+        })?;
+    execute_proxy_request(
+        stream,
+        state,
+        &request,
+        &target,
+        &method,
+        HttpResourceScheme::Http,
+    )
+}
+
+fn handle_connect_request(
+    stream: &mut TcpStream,
+    state: &ProxyState,
+    request: ProxyRequest,
+) -> std::result::Result<(), ProxyFailure> {
+    if !request.body.is_empty() {
+        return Err(ProxyFailure::new(
+            400,
+            "Bad Request",
+            "CONNECT request body is not supported",
+            Some("proxy_request_rejected"),
+            json!({"reason": "connect_body_not_supported"}),
+        ));
+    }
+    let connect_target = parse_connect_target(&request.target).map_err(|failure| {
         failure.with_audit(
             "proxy_request_rejected",
-            json!({"reason": "invalid_target"}),
+            json!({"reason": "invalid_connect_target"}),
         )
     })?;
+    write_connect_established(stream)
+        .map_err(|_| ProxyFailure::without_audit(504, "Gateway Timeout", "client write failed"))?;
+    let server_config = state
+        .ca
+        .server_config_for_host(&connect_target.host)
+        .map_err(|_| {
+            ProxyFailure::new(
+                502,
+                "Bad Gateway",
+                "local TLS setup failed",
+                Some("proxy_tls_failed"),
+                json!({
+                    "profile": state.config.profile.id,
+                    "host": connect_target.canonical_host_port,
+                    "reason": "local_tls_setup_failed",
+                }),
+            )
+        })?;
+    let mut server = rustls::ServerConnection::new(server_config).map_err(|_| {
+        ProxyFailure::new(
+            502,
+            "Bad Gateway",
+            "local TLS setup failed",
+            Some("proxy_tls_failed"),
+            json!({
+                "profile": state.config.profile.id,
+                "host": connect_target.canonical_host_port,
+                "reason": "local_tls_connection_failed",
+            }),
+        )
+    })?;
+    let mut tls = rustls::Stream::new(&mut server, stream);
+    let inner = match read_proxy_request(&mut tls) {
+        Ok(inner) => inner,
+        Err(failure) => {
+            let failure = failure.with_audit(
+                "proxy_request_rejected",
+                json!({
+                    "profile": state.config.profile.id,
+                    "host": connect_target.canonical_host_port,
+                    "reason": "invalid_tunnel_request",
+                }),
+            );
+            write_failure_inside_tunnel(&mut tls, state, failure);
+            return Ok(());
+        }
+    };
+    if inner.method.eq_ignore_ascii_case("CONNECT") {
+        write_failure_inside_tunnel(
+            &mut tls,
+            state,
+            ProxyFailure::new(
+                400,
+                "Bad Request",
+                "nested CONNECT is not supported",
+                Some("proxy_request_rejected"),
+                json!({
+                    "profile": state.config.profile.id,
+                    "host": connect_target.canonical_host_port,
+                    "reason": "nested_connect_not_supported",
+                }),
+            ),
+        );
+        return Ok(());
+    }
+    let method = match canonical_method(&inner.method) {
+        Ok(method) => method,
+        Err(failure) => {
+            let failure = failure.with_audit(
+                "proxy_request_rejected",
+                json!({
+                    "profile": state.config.profile.id,
+                    "host": connect_target.canonical_host_port,
+                    "reason": "invalid_method",
+                }),
+            );
+            write_failure_inside_tunnel(&mut tls, state, failure);
+            return Ok(());
+        }
+    };
+    let target = match parse_tunnel_target(&inner, &connect_target) {
+        Ok(target) => target,
+        Err(failure) => {
+            let failure = failure.with_audit(
+                "proxy_request_rejected",
+                json!({
+                    "profile": state.config.profile.id,
+                    "host": connect_target.canonical_host_port,
+                    "reason": "invalid_tunnel_target",
+                }),
+            );
+            write_failure_inside_tunnel(&mut tls, state, failure);
+            return Ok(());
+        }
+    };
+    if let Err(failure) = execute_proxy_request(
+        &mut tls,
+        state,
+        &inner,
+        &target,
+        &method,
+        HttpResourceScheme::Https,
+    ) {
+        write_failure_inside_tunnel(&mut tls, state, failure);
+    }
+    Ok(())
+}
+
+fn write_failure_inside_tunnel(stream: &mut impl Write, state: &ProxyState, failure: ProxyFailure) {
+    record_failure(
+        state,
+        failure.status,
+        &failure.body,
+        failure.audit_kind.clone(),
+        failure.audit_data.clone(),
+    );
+    let _ = write_simple_response(stream, failure.status, &failure.reason, &failure.body);
+}
+
+fn execute_proxy_request(
+    stream: &mut impl Write,
+    state: &ProxyState,
+    request: &ProxyRequest,
+    target: &ProxyTarget,
+    method: &str,
+    scheme: HttpResourceScheme,
+) -> std::result::Result<(), ProxyFailure> {
     let Some(resource) = find_resource(
         &state.config.profile,
+        scheme,
         &target.canonical_host_port,
-        &method,
+        method,
         &target.path,
     ) else {
+        record_proxy_proposal(state, method, target, "no_matching_resource");
         return Err(ProxyFailure::new(
             403,
             "Forbidden",
@@ -228,6 +519,7 @@ fn handle_request(
                 "host": target.canonical_host_port,
                 "path": target.path,
                 "query_present": target.query.is_some(),
+                "scheme": scheme_name(scheme),
             }),
         ));
     };
@@ -248,37 +540,46 @@ fn handle_request(
                     "host": target.canonical_host_port,
                     "path": target.path,
                     "query_present": target.query.is_some(),
+                    "scheme": scheme_name(scheme),
                 }),
             )
         })?;
 
-    let response = forward_request(&request, &target, &method, secret.expose_to_provider())
-        .map_err(|failure| {
-            ProxyFailure::new(
-                failure.status,
-                &failure.reason,
-                &failure.body,
-                Some("proxy_upstream_failed"),
-                json!({
-                    "profile": state.config.profile.id,
-                    "resource": resource.id,
-                    "method": method,
-                    "host": target.canonical_host_port,
-                    "path": target.path,
-                    "query_present": target.query.is_some(),
-                    "reason": failure.audit_reason,
-                }),
-            )
-        })?;
+    let response = forward_request(
+        request,
+        target,
+        method,
+        scheme,
+        secret.expose_to_provider(),
+        &state.config.upstream_root_certs_pem,
+    )
+    .map_err(|failure| {
+        ProxyFailure::new(
+            failure.status,
+            &failure.reason,
+            &failure.body,
+            Some("proxy_upstream_failed"),
+            json!({
+                "profile": state.config.profile.id,
+                "resource": resource.id,
+                "method": method,
+                "host": target.canonical_host_port,
+                "path": target.path,
+                "query_present": target.query.is_some(),
+                "scheme": scheme_name(scheme),
+                "reason": failure.audit_reason,
+            }),
+        )
+    })?;
 
     let receipt = issue_proxy_receipt(
-        &state.config.profile,
+        state,
         resource,
-        &target,
-        &method,
+        target,
+        method,
+        scheme,
         &request.body,
         response.status_code,
-        &state.config.signer,
     )
     .map_err(|_| {
         ProxyFailure::new(
@@ -293,6 +594,7 @@ fn handle_request(
                 "host": target.canonical_host_port,
                 "path": target.path,
                 "query_present": target.query.is_some(),
+                "scheme": scheme_name(scheme),
             }),
         )
     })?;
@@ -309,6 +611,7 @@ fn handle_request(
                 "host": target.canonical_host_port,
                 "path": target.path,
                 "query_present": target.query.is_some(),
+                "scheme": scheme_name(scheme),
             }),
         )
     })?;
@@ -329,6 +632,7 @@ fn handle_request(
                     "host": target.canonical_host_port,
                     "path": target.path,
                     "query_present": target.query.is_some(),
+                    "scheme": scheme_name(scheme),
                 }),
             )
         })?;
@@ -338,7 +642,7 @@ fn handle_request(
     Ok(())
 }
 
-fn read_proxy_request(stream: &mut TcpStream) -> std::result::Result<ProxyRequest, ProxyFailure> {
+fn read_proxy_request(stream: &mut impl Read) -> std::result::Result<ProxyRequest, ProxyFailure> {
     let mut buffer = Vec::new();
     let header_end = loop {
         let mut byte = [0u8; 1];
@@ -517,12 +821,92 @@ fn canonical_method(method: &str) -> std::result::Result<String, ProxyFailure> {
     Ok(method)
 }
 
-fn parse_absolute_http_target(target: &str) -> std::result::Result<ProxyTarget, ProxyFailure> {
-    if !target.starts_with("http://") {
+fn parse_connect_target(target: &str) -> std::result::Result<ProxyTarget, ProxyFailure> {
+    if target.contains('/')
+        || target.contains('?')
+        || target.contains('#')
+        || target
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+    {
         return Err(ProxyFailure::without_audit(
             400,
             "Bad Request",
-            "absolute http URL required",
+            "invalid CONNECT target",
+        ));
+    }
+    let canonical_host_port = canonical_host_port_for_scheme(target, HttpResourceScheme::Https)
+        .ok_or_else(|| ProxyFailure::without_audit(400, "Bad Request", "invalid CONNECT host"))?;
+    let (host, port) = split_canonical_host_port(&canonical_host_port)?;
+    Ok(ProxyTarget {
+        canonical_host_port,
+        host,
+        port,
+        path: "/".into(),
+        query: None,
+        request_target: "/".into(),
+    })
+}
+
+fn parse_tunnel_target(
+    request: &ProxyRequest,
+    connect_target: &ProxyTarget,
+) -> std::result::Result<ProxyTarget, ProxyFailure> {
+    let target = if request.target.starts_with("https://") {
+        let target = parse_absolute_target(&request.target, HttpResourceScheme::Https)?;
+        if target.canonical_host_port != connect_target.canonical_host_port {
+            return Err(ProxyFailure::without_audit(
+                400,
+                "Bad Request",
+                "absolute target does not match CONNECT host",
+            ));
+        }
+        target
+    } else if request.target.starts_with("http://") {
+        return Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "tunnel request must use HTTPS authority",
+        ));
+    } else {
+        let (path, query, request_target) = parse_path_query_target(&request.target)?;
+        ProxyTarget {
+            canonical_host_port: connect_target.canonical_host_port.clone(),
+            host: connect_target.host.clone(),
+            port: connect_target.port,
+            path,
+            query,
+            request_target,
+        }
+    };
+    let host = header_value(&request.headers, "host").ok_or_else(|| {
+        ProxyFailure::without_audit(400, "Bad Request", "tunnel request missing Host header")
+    })?;
+    let canonical_host = canonical_host_port_for_scheme(host, HttpResourceScheme::Https)
+        .ok_or_else(|| ProxyFailure::without_audit(400, "Bad Request", "invalid Host header"))?;
+    if canonical_host != connect_target.canonical_host_port {
+        return Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "Host header does not match CONNECT host",
+        ));
+    }
+    Ok(target)
+}
+
+fn parse_absolute_target(
+    target: &str,
+    scheme: HttpResourceScheme,
+) -> std::result::Result<ProxyTarget, ProxyFailure> {
+    let prefix = match scheme {
+        HttpResourceScheme::Http => "http://",
+        HttpResourceScheme::Https => "https://",
+    };
+    if !target.starts_with(prefix) {
+        return Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "absolute URL required",
         ));
     }
     if target.contains('#')
@@ -536,7 +920,7 @@ fn parse_absolute_http_target(target: &str) -> std::result::Result<ProxyTarget, 
             "ambiguous target URL",
         ));
     }
-    let rest = &target["http://".len()..];
+    let rest = &target[prefix.len()..];
     let split_at = rest.find(['/', '?']).unwrap_or(rest.len());
     let authority = &rest[..split_at];
     if authority.is_empty() || authority.contains('@') {
@@ -546,20 +930,50 @@ fn parse_absolute_http_target(target: &str) -> std::result::Result<ProxyTarget, 
             "invalid target authority",
         ));
     }
-    let canonical_host_port = canonical_host_port(authority)
+    let canonical_host_port = canonical_host_port_for_scheme(authority, scheme)
         .ok_or_else(|| ProxyFailure::without_audit(400, "Bad Request", "invalid target host"))?;
     let (host, port) = split_canonical_host_port(&canonical_host_port)?;
     let remainder = &rest[split_at..];
-    let (path, query) = if remainder.is_empty() {
+    let (path, query, request_target) = parse_path_query_target(remainder)?;
+    Ok(ProxyTarget {
+        canonical_host_port,
+        host,
+        port,
+        path,
+        query,
+        request_target,
+    })
+}
+
+fn parse_path_query_target(
+    raw_target: &str,
+) -> std::result::Result<(String, Option<String>, String), ProxyFailure> {
+    if raw_target.contains('#')
+        || raw_target
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+    {
+        return Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "ambiguous target URL",
+        ));
+    }
+    let (path, query) = if raw_target.is_empty() {
         ("/".to_string(), None)
-    } else if let Some(query) = remainder.strip_prefix('?') {
+    } else if let Some(query) = raw_target.strip_prefix('?') {
         ("/".to_string(), Some(query.to_string()))
-    } else {
-        let (path, query) = remainder
+    } else if raw_target.starts_with('/') {
+        raw_target
             .split_once('?')
             .map(|(path, query)| (path.to_string(), Some(query.to_string())))
-            .unwrap_or_else(|| (remainder.to_string(), None));
-        (path, query)
+            .unwrap_or_else(|| (raw_target.to_string(), None))
+    } else {
+        return Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "origin-form target required",
+        ));
     };
     if !query.as_deref().map(is_safe_query).unwrap_or(true) {
         return Err(ProxyFailure::without_audit(
@@ -572,14 +986,7 @@ fn parse_absolute_http_target(target: &str) -> std::result::Result<ProxyTarget, 
         Some(query) => format!("{path}?{query}"),
         None => path.clone(),
     };
-    Ok(ProxyTarget {
-        canonical_host_port,
-        host,
-        port,
-        path,
-        query,
-        request_target,
-    })
+    Ok((path, query, request_target))
 }
 
 fn split_canonical_host_port(host_port: &str) -> std::result::Result<(String, u16), ProxyFailure> {
@@ -598,14 +1005,31 @@ fn is_safe_query(query: &str) -> bool {
         .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
 }
 
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn scheme_name(scheme: HttpResourceScheme) -> &'static str {
+    match scheme {
+        HttpResourceScheme::Http => "http",
+        HttpResourceScheme::Https => "https",
+    }
+}
+
 fn find_resource<'a>(
     profile: &'a ProfileConfig,
+    scheme: HttpResourceScheme,
     canonical_target_host: &str,
     method: &str,
     path: &str,
 ) -> Option<&'a HttpResourceConfig> {
     profile.http_resources.iter().find(|resource| {
-        canonical_host_port(&resource.host).as_deref() == Some(canonical_target_host)
+        resource.scheme == scheme
+            && canonical_host_port_for_scheme(&resource.host, resource.scheme).as_deref()
+                == Some(canonical_target_host)
             && resource
                 .allow
                 .methods
@@ -620,6 +1044,22 @@ fn find_resource<'a>(
 }
 
 fn forward_request(
+    request: &ProxyRequest,
+    target: &ProxyTarget,
+    method: &str,
+    scheme: HttpResourceScheme,
+    bearer: &str,
+    upstream_root_certs_pem: &[Vec<u8>],
+) -> std::result::Result<UpstreamResponse, UpstreamFailure> {
+    match scheme {
+        HttpResourceScheme::Http => forward_plain_http_request(request, target, method, bearer),
+        HttpResourceScheme::Https => {
+            forward_https_request(request, target, method, bearer, upstream_root_certs_pem)
+        }
+    }
+}
+
+fn forward_plain_http_request(
     request: &ProxyRequest,
     target: &ProxyTarget,
     method: &str,
@@ -706,6 +1146,93 @@ fn forward_request(
     })
 }
 
+fn forward_https_request(
+    request: &ProxyRequest,
+    target: &ProxyTarget,
+    method: &str,
+    bearer: &str,
+    upstream_root_certs_pem: &[Vec<u8>],
+) -> std::result::Result<UpstreamResponse, UpstreamFailure> {
+    validate_bearer_secret(bearer)?;
+    let mut builder = reqwest::blocking::Client::builder()
+        .use_rustls_tls()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(IO_TIMEOUT);
+    for cert in upstream_root_certs_pem {
+        let cert = reqwest::Certificate::from_pem(cert).map_err(|_| {
+            UpstreamFailure::new(502, "Bad Gateway", "invalid upstream root certificate")
+        })?;
+        builder = builder.add_root_certificate(cert);
+    }
+    let client = builder
+        .build()
+        .map_err(|_| UpstreamFailure::new(502, "Bad Gateway", "HTTPS client setup failed"))?;
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| UpstreamFailure::new(400, "Bad Request", "invalid method"))?;
+    let url = format!(
+        "https://{}{}",
+        target.canonical_host_port, target.request_target
+    );
+    let mut request_builder = client
+        .request(method, &url)
+        .bearer_auth(bearer)
+        .body(request.body.clone());
+    for (name, value) in &request.headers {
+        if should_strip_header(name) {
+            continue;
+        }
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
+    let response = request_builder
+        .send()
+        .map_err(|_| UpstreamFailure::new(502, "Bad Gateway", "upstream HTTPS request failed"))?;
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response
+        .bytes()
+        .map_err(|_| UpstreamFailure::new(504, "Gateway Timeout", "upstream read failed"))?;
+    if body.len() > MAX_RESPONSE_BYTES {
+        return Err(UpstreamFailure::new(
+            502,
+            "Bad Gateway",
+            "upstream response too large",
+        ));
+    }
+    let mut bytes = Vec::new();
+    write!(
+        bytes,
+        "HTTP/1.1 {} {}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or(""),
+        body.len()
+    )
+    .map_err(|_| UpstreamFailure::new(502, "Bad Gateway", "failed to build response"))?;
+    for (name, value) in &headers {
+        if should_strip_response_header(name.as_str()) {
+            continue;
+        }
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        if value
+            .bytes()
+            .any(|byte| byte.is_ascii_control() && byte != b'\t')
+        {
+            continue;
+        }
+        write!(bytes, "{}: {}\r\n", name.as_str(), value)
+            .map_err(|_| UpstreamFailure::new(502, "Bad Gateway", "failed to build response"))?;
+    }
+    bytes.extend_from_slice(b"\r\n");
+    bytes.extend_from_slice(&body);
+    Ok(UpstreamResponse {
+        bytes,
+        status_code: Some(status.as_u16()),
+    })
+}
+
 fn validate_bearer_secret(bearer: &str) -> std::result::Result<(), UpstreamFailure> {
     if bearer
         .bytes()
@@ -739,6 +1266,23 @@ fn should_strip_header(name: &str) -> bool {
     .any(|strip| name.eq_ignore_ascii_case(strip))
 }
 
+fn should_strip_response_header(name: &str) -> bool {
+    [
+        "connection",
+        "content-length",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    ]
+    .iter()
+    .any(|strip| name.eq_ignore_ascii_case(strip))
+}
+
 fn parse_response_status(response: &[u8]) -> Option<u16> {
     let text = std::str::from_utf8(response).ok()?;
     let line = text.split("\r\n").next()?;
@@ -751,14 +1295,15 @@ fn parse_response_status(response: &[u8]) -> Option<u16> {
 }
 
 fn issue_proxy_receipt(
-    profile: &ProfileConfig,
+    state: &ProxyState,
     resource: &HttpResourceConfig,
     target: &ProxyTarget,
     method: &str,
+    scheme: HttpResourceScheme,
     body: &[u8],
     status_code: Option<u16>,
-    signer: &ReceiptSigner,
 ) -> Result<Receipt> {
+    let profile = &state.config.profile;
     let query_hash = target
         .query
         .as_deref()
@@ -771,6 +1316,7 @@ fn issue_proxy_receipt(
     };
     let mut operation = serde_json::Map::new();
     operation.insert("method".into(), json!(method));
+    operation.insert("scheme".into(), json!(scheme_name(scheme)));
     operation.insert("host".into(), json!(target.canonical_host_port));
     operation.insert("path".into(), json!(target.path));
     if let Some(query_hash) = &query_hash {
@@ -801,7 +1347,7 @@ fn issue_proxy_receipt(
         provider_request_id: Some(format!("proxy_{}", Uuid::new_v4())),
         result,
     };
-    signer.issue(
+    state.config.signer.issue(
         profile.id.clone(),
         &request,
         crate::receipts::action_hash(&request)?,
@@ -819,7 +1365,8 @@ fn profile_policy_hash(profile: &ProfileConfig, resource: &HttpResourceConfig) -
         profile_id: &profile.id,
         agent: profile.agent.as_deref(),
         resource_id: &resource.id,
-        host: &canonical_host_port(&resource.host)
+        scheme: scheme_name(resource.scheme),
+        host: &canonical_host_port_for_scheme(&resource.host, resource.scheme)
             .ok_or_else(|| AuthorityError::Config("invalid resource host".into()))?,
         methods: &resource.allow.methods,
         path_prefixes: &resource.allow.path_prefixes,
@@ -830,12 +1377,70 @@ fn profile_policy_hash(profile: &ProfileConfig, resource: &HttpResourceConfig) -
     })
 }
 
+fn record_proxy_proposal(state: &ProxyState, method: &str, target: &ProxyTarget, reason: &str) {
+    let _ = state.config.audit.record(
+        "proxy_request_proposal",
+        &json!({
+            "id": format!("prop_{}", Uuid::new_v4()),
+            "profile": state.config.profile.id,
+            "agent": state.config.profile.agent.as_deref().unwrap_or(&state.config.profile.id),
+            "capability": "http.request",
+            "method": method,
+            "host": target.canonical_host_port,
+            "path": target.path,
+            "query_present": target.query.is_some(),
+            "reason": reason,
+        }),
+    );
+}
+
+pub fn profile_allows_url(
+    profile: &ProfileConfig,
+    method: &str,
+    url: &str,
+) -> Result<Option<String>> {
+    let method = method.to_ascii_uppercase();
+    crate::config::validate_http_method(&method)?;
+    let (scheme, target) =
+        parse_url_for_profile_test(url).map_err(|failure| AuthorityError::Config(failure.body))?;
+    Ok(find_resource(
+        profile,
+        scheme,
+        &target.canonical_host_port,
+        &method,
+        &target.path,
+    )
+    .map(|resource| resource.id.clone()))
+}
+
+fn parse_url_for_profile_test(
+    url: &str,
+) -> std::result::Result<(HttpResourceScheme, ProxyTarget), ProxyFailure> {
+    if url.starts_with("https://") {
+        Ok((
+            HttpResourceScheme::Https,
+            parse_absolute_target(url, HttpResourceScheme::Https)?,
+        ))
+    } else if url.starts_with("http://") {
+        Ok((
+            HttpResourceScheme::Http,
+            parse_absolute_target(url, HttpResourceScheme::Http)?,
+        ))
+    } else {
+        Err(ProxyFailure::without_audit(
+            400,
+            "Bad Request",
+            "profile test URL must start with http:// or https://",
+        ))
+    }
+}
+
 fn bytes_hash(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 fn write_simple_response(
-    stream: &mut TcpStream,
+    stream: &mut impl Write,
     status: u16,
     reason: &str,
     body: &str,
@@ -846,6 +1451,10 @@ fn write_simple_response(
         body.len(),
         body
     )
+}
+
+fn write_connect_established(stream: &mut impl Write) -> std::io::Result<()> {
+    stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
 }
 
 #[derive(Debug)]
@@ -940,6 +1549,7 @@ struct ProfilePolicyEnvelope<'a> {
     profile_id: &'a str,
     agent: Option<&'a str>,
     resource_id: &'a str,
+    scheme: &'a str,
     host: &'a str,
     methods: &'a [String],
     path_prefixes: &'a [String],

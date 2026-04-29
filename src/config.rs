@@ -89,12 +89,21 @@ pub struct ProfileConfig {
 #[serde(deny_unknown_fields)]
 pub struct HttpResourceConfig {
     pub id: String,
+    #[serde(default = "default_http_resource_scheme")]
+    pub scheme: HttpResourceScheme,
     pub host: String,
     pub secret_ref: String,
     #[serde(default)]
     pub auth: HttpAuthConfig,
     #[serde(default)]
     pub allow: HttpAllowConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HttpResourceScheme {
+    Http,
+    Https,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,6 +138,10 @@ impl Default for HttpAuthConfig {
 
 fn default_http_auth_type() -> HttpAuthType {
     HttpAuthType::Bearer
+}
+
+fn default_http_resource_scheme() -> HttpResourceScheme {
+    HttpResourceScheme::Http
 }
 
 impl AppConfig {
@@ -201,7 +214,7 @@ impl ProfileConfig {
 impl HttpResourceConfig {
     pub fn validate(&self) -> Result<()> {
         validate_id("http resource", &self.id)?;
-        validate_host(&self.host)?;
+        validate_host(&self.host, self.scheme)?;
         if self.secret_ref.trim().is_empty() {
             return Err(AuthorityError::Config(format!(
                 "http resource {} must specify secret_ref",
@@ -309,14 +322,18 @@ pub fn validate_http_method(method: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_host(host: &str) -> Result<()> {
-    if canonical_host_port(host).is_none() {
+fn validate_host(host: &str, scheme: HttpResourceScheme) -> Result<()> {
+    if canonical_host_port_for_scheme(host, scheme).is_none() {
         return Err(AuthorityError::Config(format!("invalid host {host}")));
     }
     Ok(())
 }
 
 pub fn canonical_host_port(host: &str) -> Option<String> {
+    canonical_host_port_for_scheme(host, HttpResourceScheme::Http)
+}
+
+pub fn canonical_host_port_for_scheme(host: &str, scheme: HttpResourceScheme) -> Option<String> {
     if host.is_empty()
         || host.contains('@')
         || host.contains('[')
@@ -333,7 +350,13 @@ pub fn canonical_host_port(host: &str) -> Option<String> {
             let port = raw_port.parse::<u16>().ok()?;
             (raw_host, port)
         }
-        None => (host, 80),
+        None => (
+            host,
+            match scheme {
+                HttpResourceScheme::Http => 80,
+                HttpResourceScheme::Https => 443,
+            },
+        ),
     };
     let raw_host = raw_host.strip_suffix('.').unwrap_or(raw_host);
     if raw_host.is_empty() {
@@ -381,9 +404,10 @@ profiles:
   - id: github-reader
     agent: my-agent
     env:
-      GITHUB_API_BASE: http://api.github.com
+      GITHUB_API_BASE: https://api.github.com
     http_resources:
       - id: github-issues
+        scheme: https
         host: api.github.com
         secret_ref: op://example-vault/github-token/token
         auth:
@@ -399,11 +423,34 @@ profiles:
         let profile = config.profile("github-reader").expect("profile");
         assert_eq!(
             profile.env_vars.get("GITHUB_API_BASE").map(String::as_str),
-            Some("http://api.github.com")
+            Some("https://api.github.com")
         );
         let resource = profile.http_resources.first().expect("resource");
         assert_eq!(resource.id, "github-issues");
+        assert_eq!(resource.scheme, HttpResourceScheme::Https);
         assert_eq!(resource.auth.kind, HttpAuthType::Bearer);
+    }
+
+    #[test]
+    fn canonical_host_port_uses_scheme_default_ports() {
+        assert_eq!(
+            canonical_host_port_for_scheme("api.github.com", HttpResourceScheme::Http).as_deref(),
+            Some("api.github.com:80")
+        );
+        assert_eq!(
+            canonical_host_port_for_scheme("api.github.com", HttpResourceScheme::Https).as_deref(),
+            Some("api.github.com:443")
+        );
+        assert_eq!(
+            canonical_host_port_for_scheme("api.github.com:443", HttpResourceScheme::Https)
+                .as_deref(),
+            Some("api.github.com:443")
+        );
+        assert_eq!(
+            canonical_host_port_for_scheme("api.github.com:80", HttpResourceScheme::Https)
+                .as_deref(),
+            Some("api.github.com:80")
+        );
     }
 
     #[test]

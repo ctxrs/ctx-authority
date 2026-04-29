@@ -19,6 +19,7 @@ Implemented surfaces:
 - signed receipts
 - secret backend interface
 - provider/action adapter interface
+- profile-scoped HTTP and HTTPS proxy for `ctxa run`
 - fake providers and deterministic tests
 
 ## Control path
@@ -57,6 +58,7 @@ The skill is documentation plus examples, not a privileged execution surface.
 - `SecretBackend`: source of durable credentials.
 - `ProviderAdapter`: executor that uses credentials without exposing them to the
   agent.
+- `ProfileResource`: HTTP or HTTPS resource rule for a launched agent process.
 - `AuditEvent`: local event record.
 - `IdempotencyKey`: duplicate-execution guard.
 

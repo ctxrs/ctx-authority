@@ -16,7 +16,8 @@ The command surface should be short and memorable:
 ```bash
 ctxa init
 ctxa profile create github-reader --agent my-agent
-ctxa profile add-http github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
+ctxa profile add-https github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
+ctxa profile test github-reader --url https://api.github.com/repos/example/repo/issues
 ctxa run --profile github-reader -- my-agent
 ctxa agent create personal
 ctxa policy trust --id personal --path policy.yaml

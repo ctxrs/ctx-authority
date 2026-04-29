@@ -4,7 +4,7 @@ Local capability control for AI agents.
 
 `ctx authority` lets agents use real tools without handing them raw secrets. An agent asks for an action, `ctxa` checks policy, requests approval when needed, executes through a provider adapter, writes an audit log, and returns a signed receipt.
 
-The main local workflow is `ctxa run`: a human starts an agent command inside a named profile, and `ctxa` gives that process a loopback HTTP proxy for the resources the profile allows.
+The main local workflow is `ctxa run`: a human starts an agent command inside a named profile, and `ctxa` gives that process a loopback profile proxy for the resources the profile allows.
 
 This project is part of [ctx](https://ctx.rs). Product pages and install docs live under `https://ctx.rs/authority`.
 
@@ -71,15 +71,24 @@ secret_backend:
   type: one-password
 ```
 
-Add an HTTP resource to the profile:
+Add an HTTPS resource to the profile:
 
 ```sh
-ctxa profile add-http github-reader \
+ctxa profile add-https github-reader \
   --id github-issues \
   --host api.github.com \
   --secret-ref op://example-vault/github-token/token \
   --allow-method GET \
   --path-prefix /repos/example/repo/issues
+```
+
+Check the profile before launching an agent:
+
+```sh
+ctxa profile test github-reader \
+  --method GET \
+  --url https://api.github.com/repos/example/repo/issues
+ctxa doctor --profile github-reader
 ```
 
 Run an agent command inside the profile:
@@ -88,7 +97,13 @@ Run an agent command inside the profile:
 ctxa run --profile github-reader -- my-agent
 ```
 
-The child process receives `HTTP_PROXY`, `http_proxy`, `CTXA_PROXY_URL`, `CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP requests through that proxy are checked against the profile, receive broker-managed bearer auth, and produce local audit events plus signed receipt metadata. The proxy supports absolute-form `http://` requests; it does not intercept HTTPS `CONNECT`.
+The child process receives `HTTP_PROXY`, `HTTPS_PROXY`, common local CA trust variables, `CTXA_PROXY_URL`, `CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP and HTTPS requests through that proxy are checked against the profile, receive broker-managed bearer auth, and produce local audit events plus signed receipt metadata. HTTPS support uses a process-scoped local CA for the launched child process; `ctxa` does not install a CA into the system trust store.
+
+If a profile denies an authenticated request, inspect redacted local proposals:
+
+```sh
+ctxa proposals list
+```
 
 The lower-level action request path is available when an agent or tool submits a
 structured action request:
@@ -141,9 +156,9 @@ A type of action, such as `http.request` or `email.send`.
 
 A configured source for credentials. The broker resolves secrets inside the execution path and passes them to provider adapters without exposing raw values to the agent.
 
-**HTTP Proxy**
+**Profile Proxy**
 
-A loopback proxy created per `ctxa run`. It requires a per-run proxy credential, matches requests to profile resources, strips caller-supplied auth and proxy headers, injects broker-managed bearer auth, and records redacted audit metadata.
+A loopback proxy created per `ctxa run`. It requires a per-run proxy credential, matches HTTP and HTTPS requests to profile resources, strips caller-supplied auth and proxy headers, injects broker-managed bearer auth, and records redacted audit metadata.
 
 **Receipt**
 
@@ -152,8 +167,10 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 ## Supported Capabilities
 
 - `ctxa` CLI for local initialization, policy checks, action requests, audit logs, and receipt verification
-- run profiles with `ctxa profile create`, `ctxa profile add-http`, and `ctxa run`
-- loopback HTTP credential proxy for profile-scoped `http://` requests
+- run profiles with `ctxa profile create`, `ctxa profile add-http`, `ctxa profile add-https`, and `ctxa run`
+- loopback credential proxy for profile-scoped HTTP and HTTPS requests
+- redacted proposal events for authenticated requests denied by profile policy
+- local diagnostics with `ctxa doctor`, `ctxa ca status`, and `ctxa profile test`
 - local YAML policies with hash-pinned trust
 - fail-closed approval behavior for approval-required actions
 - SQLite audit log
@@ -166,7 +183,8 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 
 ## Limits
 
-- The profile proxy supports HTTP proxy requests, not HTTPS interception.
+- HTTPS proxying is process-scoped to the launched child process and currently supports HTTP/1.1 clients that honor standard proxy and CA environment variables.
+- `ctxa` does not install or persist a local CA.
 - `ctxa` does not sandbox the child process or stop it from using other local tools.
 - Secret backends protect the supported broker path; `.env` files remain readable by any process with filesystem access.
 - Receipts and audit events are local artifacts unless you move or publish them yourself.

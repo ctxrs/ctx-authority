@@ -30,6 +30,12 @@ run_ctxa() {
 }
 
 run_ctxa init init
+run_ctxa profile_create profile create github-reader --agent demo-agent
+run_ctxa profile_add_https profile add-https github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
+run_ctxa profile_test profile test github-reader --method GET --url https://api.github.com/repos/example/repo/issues
+run_ctxa doctor_profile doctor --profile github-reader
+run_ctxa ca_status ca status
+run_ctxa proposals_list proposals list
 run_ctxa policy_trust policy trust --id default --path tests/fixtures/demo-policy.yaml
 run_ctxa agent_create agent create demo --policy default
 run_ctxa policy_check policy check --policy tests/fixtures/demo-policy.yaml --file tests/fixtures/demo-action.json

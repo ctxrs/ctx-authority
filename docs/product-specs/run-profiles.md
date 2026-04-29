@@ -10,17 +10,24 @@ Agents often need API credentials to do useful work. Putting those credentials i
 
 ## Core behavior
 
-`ctxa run --profile <id> -- <command>` starts a local loopback HTTP proxy, injects proxy environment variables into the child process, and runs the command. Requests sent through the proxy are allowed only when they match the selected profile.
+`ctxa run --profile <id> -- <command>` starts a local loopback profile proxy, injects proxy environment variables into the child process, and runs the command. Requests sent through the proxy are allowed only when they match the selected profile.
 
 The child receives:
 
 - `HTTP_PROXY`
 - `http_proxy`
+- `HTTPS_PROXY`
+- `https_proxy`
+- `SSL_CERT_FILE`
+- `REQUESTS_CA_BUNDLE`
+- `CURL_CA_BUNDLE`
+- `NODE_EXTRA_CA_CERTS`
+- `GIT_SSL_CAINFO`
 - `CTXA_PROXY_URL`
 - `CTXA_PROXY_TOKEN`
 - `CTXA_PROFILE`
 
-Existing `ALL_PROXY`, HTTPS proxy vars, and `NO_PROXY` are removed or neutralized for the child so supported HTTP traffic uses the profile proxy.
+Existing `ALL_PROXY` and `NO_PROXY` values are removed or neutralized for the child so supported traffic uses the profile proxy.
 
 ## Profile config
 
@@ -34,9 +41,10 @@ profiles:
   - id: github-reader
     agent: my-agent
     env:
-      GITHUB_API_BASE: http://api.github.com
+      GITHUB_API_BASE: https://api.github.com
     http_resources:
       - id: github-issues
+        scheme: https
         host: api.github.com
         secret_ref: op://example-vault/github-token/token
         auth:
@@ -52,16 +60,18 @@ profiles:
 
 ```bash
 ctxa profile create github-reader --agent my-agent
-ctxa profile add-http github-reader \
+ctxa profile add-https github-reader \
   --id github-issues \
   --host api.github.com \
   --secret-ref op://example-vault/github-token/token \
   --allow-method GET \
   --path-prefix /repos/example/repo/issues
+ctxa profile test github-reader --method GET --url https://api.github.com/repos/example/repo/issues
+ctxa doctor --profile github-reader
 ctxa run --profile github-reader -- my-agent
 ```
 
-Repeated `profile add-http` with the same resource id replaces that resource.
+Repeated `profile add-http` or `profile add-https` with the same resource id replaces that resource.
 
 ## Proxy authorization
 
@@ -74,12 +84,29 @@ The proxy accepts:
 
 Unauthenticated local requests receive `407` and do not resolve secrets.
 
-## Request matching
+## HTTPS trust
 
-The proxy supports absolute-form `http://` requests. `CONNECT` and HTTPS interception are not supported.
+For HTTPS resources, `ctxa run` handles `CONNECT host:port HTTP/1.1` and
+terminates TLS locally with a per-run CA. The CA private key stays in memory.
+The CA certificate is written to a temporary file only so the child process can
+trust the proxy through the injected trust variables. `ctxa` does not install a
+CA into the system trust store.
+
+The proxy accepts HTTP/1.1 inside the tunnel and does not advertise HTTP/2.
+Absolute-form HTTPS targets inside the tunnel must match the CONNECT authority.
+Origin-form requests use the CONNECT authority.
+
+When forwarding HTTPS requests upstream, the broker does not follow upstream
+redirects. Redirect responses are returned to the child process so any follow-up
+request must pass through profile matching as a new request. Upstream forwarding
+also ignores ambient proxy environment variables and does not enable automatic
+request retries.
+
+## Request matching
 
 Allowed requests must match:
 
+- configured scheme
 - configured host after lowercase/default-port normalization
 - configured method
 - configured path prefix at a segment boundary
@@ -87,6 +114,20 @@ Allowed requests must match:
 The proxy rejects malformed or ambiguous targets, userinfo, fragments, unsupported IPv6 syntax, dot segments, encoded traversal, encoded slashes, encoded backslashes, repeated slashes, and unsafe query syntax.
 
 Query strings may be forwarded to the upstream API, but raw query strings are not written to audit events or receipts.
+
+## Proposals
+
+When an authenticated request is denied because no profile resource matches,
+the proxy records a redacted `proxy_request_proposal` audit event. Proposal
+events include profile id, agent id, method, canonical host, path, whether a
+query was present, and denial reason.
+
+Proposal events do not include raw secrets, request bodies, raw query strings,
+or caller auth headers.
+
+```bash
+ctxa proposals list
+```
 
 ## Header handling
 
@@ -118,6 +159,7 @@ Denied, malformed, unauthenticated, and upstream-failed requests write redacted 
 ## Limits
 
 - This is not a process sandbox.
-- The proxy handles HTTP requests, not HTTPS interception.
+- HTTPS support is process-scoped to the launched child process and depends on clients honoring standard proxy and CA environment variables.
+- The proxy supports HTTP/1.1 proxy traffic.
 - Request headers, request bodies, upstream responses, and concurrent requests are capped.
 - Request bodies must use `Content-Length`; chunked request bodies are rejected.

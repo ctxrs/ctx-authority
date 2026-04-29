@@ -16,6 +16,7 @@ profiles:
       ENV_NAME: non-secret string
     http_resources:
       - id: string
+        scheme: http | https
         host: host-or-host-port
         secret_ref: backend-scoped-reference
         auth:

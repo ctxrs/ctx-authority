@@ -33,8 +33,9 @@ MCP support is limited to the tools listed above.
 
 ## Run profile guidance
 
-When an agent is started with `ctxa run`, it should use `HTTP_PROXY` or
-`CTXA_PROXY_URL` for supported HTTP API calls and should not ask the human for
-the backing token. The proxy owns credential injection and receipt generation.
+When an agent is started with `ctxa run`, it should use `HTTP_PROXY`,
+`HTTPS_PROXY`, or `CTXA_PROXY_URL` for supported API calls and should not ask
+the human for the backing token. The proxy owns credential injection and
+receipt generation.
 
 The skill itself should stay runtime-agnostic.

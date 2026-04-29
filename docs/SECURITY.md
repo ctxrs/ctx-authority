@@ -10,12 +10,14 @@ Constrain how agents use capabilities without handing them durable credentials.
 - Policy enforcement before provider execution.
 - Profile enforcement before proxy credential injection.
 - Per-run local proxy authorization before secret resolution.
+- Process-scoped HTTPS proxying for launched child processes.
+- Per-run local CA generation without system trust-store installation.
 - Approval-bound actions.
 - Canonical action-hash binding.
 - Local audit.
 - Offline receipt verification.
 - Fake-provider security tests.
-- Proxy tests for auth stripping, deny-before-secret-resolution, and receipt verification.
+- Proxy tests for auth stripping, deny-before-secret-resolution, HTTPS forwarding, and receipt verification.
 
 ## Out of scope
 
@@ -23,7 +25,7 @@ Constrain how agents use capabilities without handing them durable credentials.
 - Preventing malware on the same machine from reading local files.
 - Protecting secrets after they are intentionally sent to a provider.
 - Sandboxing a child process launched by `ctxa run`.
-- Intercepting HTTPS traffic.
+- System-wide TLS interception or persistent local CA installation.
 - Solving risks for capability domains outside this local broker.
 
 ## Security guarantees
@@ -33,10 +35,15 @@ Constrain how agents use capabilities without handing them durable credentials.
 
 For run profiles, the supported claim is narrower:
 
-> For supported HTTP proxy requests, `ctxa` resolves credentials only after
+> For supported profile proxy requests, `ctxa` resolves credentials only after
 > proxy authorization and profile matching, strips caller-supplied auth headers,
 > injects broker-managed bearer auth, and keeps raw secret values out of local
 > audit and receipt output.
+
+For supported HTTPS profile resources, this guarantee applies inside a
+process-scoped `CONNECT` tunnel created for the launched child process. The
+per-run CA private key remains in memory, and only the CA certificate is exposed
+to the child through temporary trust configuration.
 
 These guarantees are limited to the documented local broker surfaces and do not
 make claims about endpoint hardening, enterprise compliance, or regulated
