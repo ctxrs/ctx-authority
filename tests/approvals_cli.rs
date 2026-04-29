@@ -94,7 +94,7 @@ fn policy_check_denies_when_no_grant_matches() {
   "operation": {
     "method": "POST",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/1"
+    "path": "/repos/example-org/example-repo/issues/1"
   },
   "payload": {}
 }"#,
@@ -135,7 +135,7 @@ fn policy_check_denies_path_prefix_siblings() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues-admin"
+    "path": "/repos/example-org/example-repo/issues-admin"
   },
   "payload": {}
 }"#,
@@ -175,7 +175,7 @@ fn policy_check_denies_dot_segment_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/../settings"
+    "path": "/repos/example-org/example-repo/issues/../settings"
   },
   "payload": {}
 }"#,
@@ -215,7 +215,7 @@ fn policy_check_denies_http_query_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/1?admin=true"
+    "path": "/repos/example-org/example-repo/issues/1?admin=true"
   },
   "payload": {}
 }"#,
@@ -255,7 +255,7 @@ fn policy_check_denies_http_query_fields_in_payload() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/1"
+    "path": "/repos/example-org/example-repo/issues/1"
   },
   "payload": {
     "query": "admin=true"
@@ -298,7 +298,7 @@ fn policy_check_rejects_duplicate_action_json_keys() {
     "method": "POST",
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/1"
+    "path": "/repos/example-org/example-repo/issues/1"
   },
   "payload": {}
 }"#,
@@ -333,7 +333,7 @@ fn policy_check_denies_encoded_dot_segment_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctxrs/ctx-authority/issues/%2e%2e/settings"
+    "path": "/repos/example-org/example-repo/issues/%2e%2e/settings"
   },
   "payload": {}
 }"#,
@@ -538,7 +538,7 @@ fn action_request_ignores_caller_controlled_approval_env() {
 }
 
 #[test]
-fn runtime_can_use_internal_test_approval_provider() {
+fn runtime_can_use_test_approval_provider() {
     let home = tempfile::tempdir().unwrap();
     let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
     let policy_text = fs::read_to_string(fixture("approval-required-policy.yaml")).unwrap();
@@ -654,7 +654,7 @@ grants:
     allow:
       methods: [GET]
       hosts: [api.fake-github.local]
-      path_prefixes: [/repos/ctxrs/ctx-authority]
+      path_prefixes: [/repos/example-org/example-repo]
 "#,
     )
     .unwrap();
@@ -711,13 +711,13 @@ grants:
 #[test]
 fn policy_check_rejects_unsupported_policy_versions() {
     let temp = tempfile::tempdir().unwrap();
-    let policy_path = temp.path().join("future-policy.yaml");
+    let policy_path = temp.path().join("unsupported-version-policy.yaml");
     fs::write(
         &policy_path,
         r#"
 version: 2
 grants:
-  - id: future
+  - id: unsupported_version
     agent: demo
     capability: http.request
     resource: fake-github
@@ -1060,7 +1060,7 @@ grants:
     allow:
       methods: [GET]
       hosts: [api.fake-github.local]
-      path_prefixes: ['/repos/ctxrs/ctx-authority/issues/']
+      path_prefixes: ['/repos/example-org/example-repo/issues/']
 "#,
     )
     .unwrap();
@@ -1361,7 +1361,7 @@ fn runtime_action_hash_includes_operation() {
     first.id = "act_one".into();
     second.id = "act_two".into();
     second.operation["path"] =
-        serde_json::Value::String("/repos/ctxrs/ctx-authority/issues/2".into());
+        serde_json::Value::String("/repos/example-org/example-repo/issues/2".into());
 
     assert_ne!(action_hash(&first).unwrap(), action_hash(&second).unwrap());
 }

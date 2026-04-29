@@ -1,7 +1,9 @@
 use crate::backends::SecretBackendConfig;
+use crate::policy::is_valid_http_path_prefix;
 use crate::{AuthorityError, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -48,6 +50,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub policies: Vec<PolicyConfig>,
     #[serde(default)]
+    pub profiles: Vec<ProfileConfig>,
+    #[serde(default)]
     pub secret_backend: Option<SecretBackendConfig>,
 }
 
@@ -69,22 +73,282 @@ pub struct PolicyConfig {
     pub hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileConfig {
+    pub id: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default, rename = "env")]
+    pub env_vars: BTreeMap<String, String>,
+    #[serde(default)]
+    pub http_resources: Vec<HttpResourceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpResourceConfig {
+    pub id: String,
+    pub host: String,
+    pub secret_ref: String,
+    #[serde(default)]
+    pub auth: HttpAuthConfig,
+    #[serde(default)]
+    pub allow: HttpAllowConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpAuthConfig {
+    #[serde(rename = "type", default = "default_http_auth_type")]
+    pub kind: HttpAuthType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HttpAuthType {
+    Bearer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpAllowConfig {
+    #[serde(default)]
+    pub methods: Vec<String>,
+    #[serde(default)]
+    pub path_prefixes: Vec<String>,
+}
+
+impl Default for HttpAuthConfig {
+    fn default() -> Self {
+        Self {
+            kind: default_http_auth_type(),
+        }
+    }
+}
+
+fn default_http_auth_type() -> HttpAuthType {
+    HttpAuthType::Bearer
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
         let text = fs::read_to_string(path)?;
-        Ok(serde_yaml::from_str(&text)?)
+        let config: Self = serde_yaml::from_str(&text)?;
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.validate()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, serde_yaml::to_string(self)?)?;
         Ok(())
     }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure_unique_ids("agent", self.agents.iter().map(|agent| agent.id.as_str()))?;
+        ensure_unique_ids(
+            "policy",
+            self.policies.iter().map(|policy| policy.id.as_str()),
+        )?;
+        ensure_unique_ids(
+            "profile",
+            self.profiles.iter().map(|profile| profile.id.as_str()),
+        )?;
+        for profile in &self.profiles {
+            profile.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn profile(&self, id: &str) -> Option<&ProfileConfig> {
+        self.profiles.iter().find(|profile| profile.id == id)
+    }
+
+    pub fn profile_mut(&mut self, id: &str) -> Option<&mut ProfileConfig> {
+        self.profiles.iter_mut().find(|profile| profile.id == id)
+    }
+}
+
+impl ProfileConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_id("profile", &self.id)?;
+        if let Some(agent) = &self.agent {
+            validate_id("profile agent", agent)?;
+        }
+        for key in self.env_vars.keys() {
+            validate_env_key(key)?;
+        }
+        ensure_unique_ids(
+            "http resource",
+            self.http_resources
+                .iter()
+                .map(|resource| resource.id.as_str()),
+        )?;
+        for resource in &self.http_resources {
+            resource.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl HttpResourceConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_id("http resource", &self.id)?;
+        validate_host(&self.host)?;
+        if self.secret_ref.trim().is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "http resource {} must specify secret_ref",
+                self.id
+            )));
+        }
+        if self.allow.methods.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "http resource {} must specify at least one method",
+                self.id
+            )));
+        }
+        if self.allow.path_prefixes.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "http resource {} must specify at least one path_prefix",
+                self.id
+            )));
+        }
+        for method in &self.allow.methods {
+            validate_http_method(method)?;
+        }
+        for prefix in &self.allow.path_prefixes {
+            if !is_valid_http_path_prefix(prefix) {
+                return Err(AuthorityError::Config(format!(
+                    "http resource {} has invalid path_prefix {}",
+                    self.id, prefix
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ids {
+        if !seen.insert(id) {
+            return Err(AuthorityError::Config(format!("duplicate {label} id {id}")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_id(label: &str, id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(AuthorityError::Config(format!(
+            "invalid {label} id {id}; use letters, digits, '.', '_', or '-'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_env_key(key: &str) -> Result<()> {
+    const RESERVED_ENV_KEYS: &[&str] = &[
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "CTXA_PROFILE",
+        "CTXA_PROXY_URL",
+        "CTXA_PROXY_TOKEN",
+    ];
+    if RESERVED_ENV_KEYS.iter().any(|reserved| reserved == &key) {
+        return Err(AuthorityError::Config(format!(
+            "profile env key {key} is reserved"
+        )));
+    }
+    let mut bytes = key.bytes();
+    let Some(first) = bytes.next() else {
+        return Err(AuthorityError::Config("empty profile env key".into()));
+    };
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return Err(AuthorityError::Config(format!(
+            "invalid profile env key {key}"
+        )));
+    }
+    if !bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()) {
+        return Err(AuthorityError::Config(format!(
+            "invalid profile env key {key}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_http_method(method: &str) -> Result<()> {
+    if method.is_empty()
+        || method.len() > 32
+        || !method
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(AuthorityError::Config(format!(
+            "invalid HTTP method {method}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_host(host: &str) -> Result<()> {
+    if canonical_host_port(host).is_none() {
+        return Err(AuthorityError::Config(format!("invalid host {host}")));
+    }
+    Ok(())
+}
+
+pub fn canonical_host_port(host: &str) -> Option<String> {
+    if host.is_empty()
+        || host.contains('@')
+        || host.contains('[')
+        || host.contains(']')
+        || host.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return None;
+    }
+    let (raw_host, port) = match host.rsplit_once(':') {
+        Some((raw_host, raw_port)) => {
+            if raw_host.contains(':') {
+                return None;
+            }
+            let port = raw_port.parse::<u16>().ok()?;
+            (raw_host, port)
+        }
+        None => (host, 80),
+    };
+    let raw_host = raw_host.strip_suffix('.').unwrap_or(raw_host);
+    if raw_host.is_empty() {
+        return None;
+    }
+    if raw_host.starts_with('-') || raw_host.ends_with('-') || raw_host.contains("..") {
+        return None;
+    }
+    if !raw_host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    {
+        return None;
+    }
+    Some(format!("{}:{port}", raw_host.to_ascii_lowercase()))
 }
 
 #[cfg(test)]
@@ -107,5 +371,70 @@ secret_backend:
             secret_backend,
             SecretBackendConfig::EnvFile { ref path } if path == Path::new(".env.local")
         ));
+    }
+
+    #[test]
+    fn app_config_loads_profile_http_resources() {
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+profiles:
+  - id: github-reader
+    agent: my-agent
+    env:
+      GITHUB_API_BASE: http://api.github.com
+    http_resources:
+      - id: github-issues
+        host: api.github.com
+        secret_ref: op://example-vault/github-token/token
+        auth:
+          type: bearer
+        allow:
+          methods: [GET]
+          path_prefixes: [/repos/example/repo/issues]
+"#,
+        )
+        .unwrap();
+        config.validate().unwrap();
+
+        let profile = config.profile("github-reader").expect("profile");
+        assert_eq!(
+            profile.env_vars.get("GITHUB_API_BASE").map(String::as_str),
+            Some("http://api.github.com")
+        );
+        let resource = profile.http_resources.first().expect("resource");
+        assert_eq!(resource.id, "github-issues");
+        assert_eq!(resource.auth.kind, HttpAuthType::Bearer);
+    }
+
+    #[test]
+    fn app_config_rejects_reserved_profile_env_keys() {
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+profiles:
+  - id: demo
+    env:
+      HTTP_PROXY: http://proxy.invalid
+"#,
+        )
+        .unwrap();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("reserved"));
+    }
+
+    #[test]
+    fn canonical_host_port_normalizes_default_ports() {
+        assert_eq!(
+            canonical_host_port("API.Example.COM"),
+            Some("api.example.com:80".into())
+        );
+        assert_eq!(
+            canonical_host_port("api.example.com:8080"),
+            Some("api.example.com:8080".into())
+        );
+        assert_eq!(
+            canonical_host_port("api.example.com."),
+            Some("api.example.com:80".into())
+        );
+        assert_eq!(canonical_host_port("[::1]:80"), None);
     }
 }

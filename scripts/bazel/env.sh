@@ -43,7 +43,7 @@ ctxa_cache_root() {
     return 0
   fi
 
-  local cache_root="${CTXA_CACHE_ROOT:-/Volumes/ctx-cache/ctxa}"
+  local cache_root="${CTXA_CACHE_ROOT:-${TMPDIR:-/tmp}/ctxa-cache}"
   if mkdir -p "$cache_root" 2>/dev/null; then
     printf '%s\n' "$cache_root"
     return 0

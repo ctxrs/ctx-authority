@@ -30,7 +30,7 @@ The repository has Bazel wrapper targets for granular local feedback, Cargo buil
 
 ## Build output
 
-Wrapper scripts set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `CTXA_CACHE_ROOT` can override the cache root; when unset, the scripts use the shared ctx cache when available and a temp-dir fallback otherwise.
+Wrapper scripts set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `CTXA_CACHE_ROOT` can override the cache root; when unset, the scripts use a temp-dir cache.
 
 `CARGO_HOME` defaults to `/tmp/ctxa-cargo-home` and can be overridden with `CTXA_CARGO_HOME`. `sccache` can be enabled with `CTXA_USE_SCCACHE=1`.
 

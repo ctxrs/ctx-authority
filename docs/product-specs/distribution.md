@@ -31,8 +31,6 @@ Local development:
 cargo install --path .
 ```
 
-Do not reuse `https://ctx.rs/install` for `ctxa`; that route belongs to the main ctx app. The ctx authority install page should live under `https://ctx.rs/authority/install`.
-
 ## Homebrew tap model
 
 The tap repository is `ctxrs/homebrew-tap`. Homebrew lets users install directly from a tap with one command, and automatically taps the repository before installing the formula:
@@ -41,7 +39,7 @@ The tap repository is `ctxrs/homebrew-tap`. Homebrew lets users install directly
 brew install ctxrs/tap/ctxa
 ```
 
-The v0.1 formula builds from the tagged GitHub source archive. Prebuilt binary releases can be added later through cargo-dist or equivalent release automation without changing the user-facing formula name.
+The Homebrew formula builds from the tagged GitHub source archive.
 
 ## Release checklist
 

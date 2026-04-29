@@ -8,7 +8,7 @@ Receipts are signed records of executed actions.
 - make tampering detectable
 - avoid raw secret exposure
 - work offline
-- support later hosted publication and verification flows
+- support export and independent local verification
 
 ## Receipt shape
 
@@ -25,14 +25,14 @@ Receipts are signed records of executed actions.
   "approval": {
     "required": true,
     "approved_by": "local-human",
-    "approved_at": "2026-04-28T18:02:00Z"
+    "approved_at": "2000-01-01T00:02:00Z"
   },
   "execution": {
     "status": "succeeded",
     "provider": "fake-mailgun",
     "provider_request_id": "fake-request-1"
   },
-  "issued_at": "2026-04-28T18:03:00Z",
+  "issued_at": "2000-01-01T00:03:00Z",
   "signature": {
     "alg": "ed25519",
     "kid": "local-test-key",
@@ -60,7 +60,7 @@ The format is intentionally simple:
 - no dependency on JWT semantics that may imply auth tokens rather than records
 - maps cleanly to JSONL local audit/export
 
-The `receipt_version` field allows later JWS, COSE, or verifiable-credential-compatible formats without breaking existing receipts.
+The `receipt_version` field identifies the receipt envelope used by this schema.
 
 ## Action hash
 

@@ -2,35 +2,24 @@
 
 `ctxa` is the local capability broker for `ctx authority`.
 
-It is useful by itself in offline/local mode and is designed to work as the
-open-source edge component for hosted `ctx authority` deployments.
+It is useful by itself in offline/local mode. This repository implements the
+local CLI, policy, audit, receipt, secret-backend, and provider-adapter
+boundaries.
 
 ## Boundaries
 
-In scope:
+Implemented surfaces:
 
 - local CLI
-- local daemon
-- MCP server
+- MCP server for metadata and structural receipt verification
 - agent-agnostic skill/instruction pack
 - local policies
-- local approvals
+- fail-closed approval handling
 - local audit log
 - signed receipts
 - secret backend interface
 - provider/action adapter interface
 - fake providers and deterministic tests
-
-Current non-goals:
-
-- hosted cloud control plane
-- mobile approvals
-- hosted email
-- phone/SMS/voice
-- cards/spending
-- physical mail
-- enterprise SSO/admin
-- public receipt verification service
 
 ## Control path
 

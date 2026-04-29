@@ -11,8 +11,8 @@ record the small product-specific decisions this repo relies on.
 - Tools reference: <https://modelcontextprotocol.io/specification/draft/server/tools>
 - JSON-RPC 2.0: <https://www.jsonrpc.org/specification>
 
-The tools reference is intentionally linked to the current draft page until the
-MCP site publishes a version-pinned tools page matching the schema reference.
+The tools reference links to the MCP draft tools page because the schema
+reference is version-pinned separately.
 
 ## Local decisions
 
@@ -22,5 +22,5 @@ MCP site publishes a version-pinned tools page matching the schema reference.
 - `tools/list` returns tools in deterministic order.
 - `tools/call` uses MCP `CallToolResult` responses. Tool-level failures return
   `isError: true`; malformed JSON-RPC requests use JSON-RPC error objects.
-- The initial MCP surface is stateless and does not load local config, secrets,
+- The MCP surface is stateless and does not load local config, secrets,
   policy, approval state, or signing keys.

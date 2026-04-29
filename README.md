@@ -4,10 +4,12 @@ Local capability control for AI agents.
 
 `ctx authority` lets agents use real tools without handing them raw secrets. An agent asks for an action, `ctxa` checks policy, requests approval when needed, executes through a provider adapter, writes an audit log, and returns a signed receipt.
 
+The main local workflow is `ctxa run`: a human starts an agent command inside a named profile, and `ctxa` gives that process a loopback HTTP proxy for the resources the profile allows.
+
 This project is part of [ctx](https://ctx.rs). Product pages and install docs live under `https://ctx.rs/authority`.
 
 ```text
-agent -> ctxa -> policy -> approval -> provider -> receipt
+agent command -> ctxa run -> profile -> local proxy -> secret backend -> upstream API -> receipt
 ```
 
 ## Why
@@ -56,25 +58,53 @@ Initialize local state:
 ctxa init
 ```
 
-Trust a policy and attach it to an agent:
+Create a run profile:
 
 ```sh
-ctxa policy trust --id default --path tests/fixtures/demo-policy.yaml
-ctxa agent create demo --policy default
+ctxa profile create github-reader --agent my-agent
 ```
 
-Check an action against a policy:
+Configure a secret backend in the config file created by `ctxa init`, or in `$CTXA_HOME/config.yaml` when `CTXA_HOME` is set. This example uses 1Password secret references:
+
+```yaml
+secret_backend:
+  type: one-password
+```
+
+Add an HTTP resource to the profile:
+
+```sh
+ctxa profile add-http github-reader \
+  --id github-issues \
+  --host api.github.com \
+  --secret-ref op://example-vault/github-token/token \
+  --allow-method GET \
+  --path-prefix /repos/example/repo/issues
+```
+
+Run an agent command inside the profile:
+
+```sh
+ctxa run --profile github-reader -- my-agent
+```
+
+The child process receives `HTTP_PROXY`, `http_proxy`, `CTXA_PROXY_URL`, `CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP requests through that proxy are checked against the profile, receive broker-managed bearer auth, and produce local audit events plus signed receipt metadata. The proxy supports absolute-form `http://` requests; it does not intercept HTTPS `CONNECT`.
+
+The lower-level action request path is available when an agent or tool submits a
+structured action request:
 
 ```sh
 ctxa policy check \
-  --policy tests/fixtures/demo-policy.yaml \
-  --file tests/fixtures/demo-action.json
+  --policy examples/demo-policy.yaml \
+  --file examples/demo-action.json
 ```
 
 Request the action through the trusted local broker:
 
 ```sh
-ctxa action request --file tests/fixtures/demo-action.json
+ctxa policy trust --id demo --path examples/demo-policy.yaml
+ctxa agent create demo --policy demo
+ctxa action request --file examples/demo-action.json > receipt.json
 ```
 
 Verify the resulting receipt:
@@ -93,11 +123,15 @@ ctxa log
 
 **Agent**
 
-A named actor with an attached trusted policy.
+A named actor or process represented by a profile.
+
+**Profile**
+
+A local configuration entry that defines non-secret child environment values and scoped HTTP resources for `ctxa run`.
 
 **Policy**
 
-A local YAML document that grants scoped capabilities. Execution uses the policy hash pinned by `ctxa policy trust`; agents cannot provide a policy path at action time.
+A local YAML document that grants scoped capabilities for explicit JSON action requests. Execution uses the policy hash pinned by `ctxa policy trust`; agents cannot provide a policy path at action time.
 
 **Capability**
 
@@ -107,13 +141,19 @@ A type of action, such as `http.request` or `email.send`.
 
 A configured source for credentials. The broker resolves secrets inside the execution path and passes them to provider adapters without exposing raw values to the agent.
 
+**HTTP Proxy**
+
+A loopback proxy created per `ctxa run`. It requires a per-run proxy credential, matches requests to profile resources, strips caller-supplied auth and proxy headers, injects broker-managed bearer auth, and records redacted audit metadata.
+
 **Receipt**
 
 A signed record of the action, policy hash, payload hash, approval state, and provider result.
 
-## Current Capabilities
+## Supported Capabilities
 
 - `ctxa` CLI for local initialization, policy checks, action requests, audit logs, and receipt verification
+- run profiles with `ctxa profile create`, `ctxa profile add-http`, and `ctxa run`
+- loopback HTTP credential proxy for profile-scoped `http://` requests
 - local YAML policies with hash-pinned trust
 - fail-closed approval behavior for approval-required actions
 - SQLite audit log
@@ -124,9 +164,16 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - `.env`, OS keychain, 1Password CLI, and test backends
 - deterministic fake providers for closed-system tests
 
+## Limits
+
+- The profile proxy supports HTTP proxy requests, not HTTPS interception.
+- `ctxa` does not sandbox the child process or stop it from using other local tools.
+- Secret backends protect the supported broker path; `.env` files remain readable by any process with filesystem access.
+- Receipts and audit events are local artifacts unless you move or publish them yourself.
+
 ## MCP
 
-`ctxa mcp serve` starts a stdio MCP server. The current server exposes broker metadata and structural receipt verification.
+`ctxa mcp serve` starts a stdio MCP server for broker metadata and structural receipt verification.
 
 ```sh
 ctxa mcp serve
@@ -152,7 +199,8 @@ Run the full repository gate:
 bazel test //:full_suite
 ```
 
-The Bazel wrappers keep Cargo build output outside the repository and use the shared ctx cache when available.
+The Bazel wrappers keep Cargo build output outside the repository. Set
+`CTXA_CACHE_ROOT` to choose a persistent cache location.
 
 ## Repository
 
@@ -160,12 +208,3 @@ The Bazel wrappers keep Cargo build output outside the repository and use the sh
 - [docs/product-specs](docs/product-specs): behavior specs and acceptance criteria
 - [docs/SECURITY.md](docs/SECURITY.md): security model
 - [skills/ctx-authority](skills/ctx-authority): agent instructions for using `ctxa`
-
-## Planned Work
-
-- human approval UI
-- real provider adapters
-- hosted ctx authority service
-- additional secret backends
-- richer MCP action surfaces
-- admin and team policy workflows

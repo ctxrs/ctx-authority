@@ -12,6 +12,12 @@ pub struct SecretLease {
 }
 
 impl SecretLease {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
     pub fn expose_to_provider(&self) -> &str {
         &self.value
     }
@@ -133,9 +139,7 @@ impl SecretBackend for FakeBackend {
             .values
             .get(reference)
             .ok_or_else(|| AuthorityError::SecretBackend("secret reference not found".into()))?;
-        Ok(SecretLease {
-            value: value.clone(),
-        })
+        Ok(SecretLease::new(value.clone()))
     }
 }
 
@@ -335,9 +339,7 @@ impl SecretBackend for EnvFileBackend {
             .values
             .get(reference)
             .ok_or_else(|| AuthorityError::SecretBackend("secret reference not found".into()))?;
-        Ok(SecretLease {
-            value: value.clone(),
-        })
+        Ok(SecretLease::new(value.clone()))
     }
 }
 
@@ -386,7 +388,7 @@ impl SecretBackend for OnePasswordBackend {
             AuthorityError::SecretBackend("1Password CLI returned non-UTF-8 secret".into())
         })?;
         let value = strip_trailing_line_ending(value);
-        Ok(SecretLease { value })
+        Ok(SecretLease::new(value))
     }
 }
 
@@ -453,7 +455,7 @@ where
             .store
             .get_password(&self.service, reference)
             .map_err(|_| AuthorityError::SecretBackend("keychain read error".into()))?;
-        Ok(SecretLease { value })
+        Ok(SecretLease::new(value))
     }
 }
 
@@ -478,9 +480,7 @@ mod tests {
 
     #[test]
     fn secret_lease_debug_redacts_value() {
-        let lease = SecretLease {
-            value: "secret-value".into(),
-        };
+        let lease = SecretLease::new("secret-value");
         assert!(!format!("{lease:?}").contains("secret-value"));
 
         let backend = FakeBackend::new(BTreeMap::from([("github".into(), "secret-value".into())]));

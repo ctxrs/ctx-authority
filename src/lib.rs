@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod models;
 pub mod policy;
 pub mod providers;
+pub mod proxy;
 pub mod receipts;
 pub mod runtime;
 

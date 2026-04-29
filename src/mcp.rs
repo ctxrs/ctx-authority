@@ -114,7 +114,7 @@ fn tools() -> Vec<Value> {
         json!({
             "name": "receipts.verify",
             "title": "Verify Receipt Structure",
-            "description": "Check that a receipt is parseable and carries the supported ed25519 signature envelope. This minimal MCP surface does not yet perform key-based signature verification.",
+            "description": "Performs structural receipt validation only.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -176,29 +176,7 @@ fn capabilities_list() -> Value {
                 "verification": "structural"
             }
         ],
-        "broker_capabilities": [
-            {
-                "name": "actions.request",
-                "status": "planned"
-            },
-            {
-                "name": "http.request",
-                "status": "planned"
-            },
-            {
-                "name": "approvals.status",
-                "status": "planned"
-            },
-            {
-                "name": "audit.search",
-                "status": "planned"
-            },
-            {
-                "name": "receipts.verify",
-                "status": "available",
-                "verification": "structural"
-            }
-        ]
+        "broker_capabilities": []
     })
 }
 

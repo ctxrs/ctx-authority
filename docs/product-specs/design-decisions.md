@@ -4,7 +4,7 @@
 
 The broker is implemented in Rust.
 
-Initial implementation choices:
+Implementation choices:
 
 - CLI: `clap`
 - async runtime: none in the initial CLI path
@@ -16,7 +16,9 @@ Initial implementation choices:
 
 ## Process model
 
-The command surface is CLI-first. A long-running local daemon can be added after the CLI and policy model are stable.
+The command surface is CLI-first. Commands load trusted local configuration,
+evaluate policy, execute through broker-owned adapters, and write local audit
+and receipt records.
 
 ## Secret backends
 
@@ -27,19 +29,20 @@ The initial backend set is:
 - OS keychain through the platform credential store
 - 1Password through `op read`
 
-Infisical, Doppler, Bitwarden Secrets Manager, HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, and Azure Key Vault are adapter candidates.
-
 ## Plugin model
 
-Backends and provider adapters are compiled in first. External plugin support comes after the local trait and security boundary are stable.
+Backends and provider adapters are compiled in. This keeps the execution and
+redaction boundary inspectable in the repository.
 
 ## Receipt signing
 
-Receipts use canonical JSON plus Ed25519. JWS, COSE, and verifiable-credential-compatible envelopes can be added later through explicit receipt versioning.
+Receipts use canonical JSON plus Ed25519. The `receipt_version` field makes the
+current envelope explicit.
 
-## Local UI
+## Approval behavior
 
-The first approval behavior is CLI fail-closed behavior plus test-harness approval providers. A TUI, local web UI, or daemon-backed approval flow can be added when it has deterministic test coverage.
+Approval-required actions fail closed unless an approval provider is configured.
+The default public CLI does not expose a test auto-approval mode.
 
 ## Telemetry
 

@@ -13,33 +13,28 @@ The skill teaches:
 
 - what `ctxa` is
 - when to request a capability
+- how to use profile-provided proxy environment variables
 - how to call the CLI
 - how to use the MCP tools
 - how to handle allow, deny, and approval-required responses
 - how to avoid leaking secrets into prompts, logs, files, or error reports
 - how to verify receipts
 
-## Current MCP guidance
+## MCP guidance
 
 The skill describes `ctxa mcp serve` as a stdio MCP server with a minimal tool
 surface:
 
-- `capabilities.list` lists currently exposed MCP tools and planned broker
-  capabilities.
+- `capabilities.list` lists available MCP tools and broker capabilities.
 - `receipts.verify` accepts either `receipt` as an object or `receipt_json` as a
   string and performs structural receipt verification.
 
-The skill must not claim MCP support for action execution or approval polling
-until `actions.request`, `http.request`, and `approvals.status` are implemented.
+MCP support is limited to the tools listed above.
 
-## Runtime-specific docs
+## Run profile guidance
 
-Separate setup docs can explain how to expose the skill to:
-
-- Codex
-- Claude Code
-- OpenClaw
-- Cursor
-- generic MCP clients
+When an agent is started with `ctxa run`, it should use `HTTP_PROXY` or
+`CTXA_PROXY_URL` for supported HTTP API calls and should not ask the human for
+the backing token. The proxy owns credential injection and receipt generation.
 
 The skill itself should stay runtime-agnostic.

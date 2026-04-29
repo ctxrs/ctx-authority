@@ -4,13 +4,13 @@
 
 ## Supported Versions
 
-This repository currently publishes source from the `main` branch. Until tagged releases exist, please test against `main` before reporting an issue.
+Supported versions are the latest tagged release and `main` for source builds.
 
 ## Reporting a Vulnerability
 
 Please do not open a public issue for a suspected vulnerability.
 
-Send a private report to the maintainers through the repository security advisory flow once the GitHub repository is published. If that is not available, contact the project maintainers directly.
+Send a private report through the GitHub Security Advisory flow for this repository.
 
 Include:
 
@@ -22,4 +22,4 @@ Include:
 
 ## Scope
 
-Security-sensitive areas include policy evaluation, secret backend resolution, approval binding, audit logging, receipt signing, MCP parsing, and provider execution.
+Security-sensitive areas include run profile enforcement, local proxy authorization, policy evaluation, secret backend resolution, approval binding, audit logging, receipt signing, MCP parsing, and provider execution.

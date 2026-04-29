@@ -35,7 +35,7 @@ The repository includes a local-first `ctxa` broker that lets an agent request f
 ## Follow-up work
 
 - human approval UI
-- real provider adapters
+- additional provider adapters
 - MCP action execution
 - MCP approval state
 - key-based receipt verification through MCP

@@ -2,7 +2,7 @@
 
 The MCP server is a first-class interface for agents.
 
-## Current surface
+## Supported surface
 
 `ctxa mcp serve` runs a minimal MCP-compatible stdio JSON-RPC server. It reads
 one JSON-RPC message per line from stdin and writes one JSON-RPC response per
@@ -29,14 +29,10 @@ receipt parses into the local receipt schema and includes a supported non-empty
 `ed25519` signature envelope. Use `ctxa receipts verify` for cryptographic local
 receipt verification.
 
-## Initial tools
+## Supported MCP tools
 
 - `capabilities.list` - implemented
 - `receipts.verify` - implemented with structural verification
-- `actions.request` - planned
-- `http.request` - planned
-- `approvals.status` - planned
-- `audit.search` - planned
 
 ## Tool rule
 
@@ -71,10 +67,10 @@ Tool call request:
 
 ## MCP acceptance behavior
 
-The current MCP surface supports:
+The MCP surface supports:
 
 1. list capabilities
 2. verify receipt structure
 
-Action execution, approval state, and cryptographic receipt verification over
-MCP are planned work.
+Action execution, approval state, audit search, and cryptographic receipt
+verification are not available over MCP.

@@ -13,12 +13,17 @@ Request capabilities, not secrets.
 ## Common commands
 
 ```bash
+ctxa run --profile <profile-id> -- <agent-or-tool-command>
 ctxa action request --file <action.json>
 ctxa policy check --policy <policy.yaml> --file <action.json>
 ctxa log
 ctxa receipts verify <receipt.json>
 ctxa mcp serve
 ```
+
+If you are already running inside `ctxa run`, use the provided `HTTP_PROXY` or
+`CTXA_PROXY_URL` for supported HTTP API calls. Do not ask for the underlying API
+token. Do not replace the proxy-managed `Authorization` header.
 
 `ctxa action request` uses the human-configured trusted policy and agent profile
 from local broker config. Do not supply your own policy path for execution.

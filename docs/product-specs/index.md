@@ -3,6 +3,7 @@
 Read these specs before changing broker behavior:
 
 - [local-broker.md](local-broker.md)
+- [run-profiles.md](run-profiles.md)
 - [policy-schema.md](policy-schema.md)
 - [receipt-schema.md](receipt-schema.md)
 - [mcp-server.md](mcp-server.md)

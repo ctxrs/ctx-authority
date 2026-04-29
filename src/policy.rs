@@ -263,7 +263,7 @@ impl Grant {
                 .allow
                 .path_prefixes
                 .iter()
-                .any(|prefix| path_matches_prefix(path, prefix))
+                .any(|prefix| http_path_matches_prefix(path, prefix))
         {
             return false;
         }
@@ -313,7 +313,7 @@ fn payload_keys_allowed(payload: &serde_json::Value, allowed_keys: &[&str]) -> b
     }
 }
 
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+pub fn http_path_matches_prefix(path: &str, prefix: &str) -> bool {
     if !is_safe_http_path(path) || !is_safe_http_path_prefix(prefix) {
         return false;
     }
@@ -324,11 +324,14 @@ fn path_matches_prefix(path: &str, prefix: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+pub fn is_valid_http_path_prefix(path: &str) -> bool {
+    is_safe_http_path_prefix(path)
+}
+
 fn is_safe_http_path(path: &str) -> bool {
     if path.is_empty() || !path.starts_with('/') || path.contains('\\') {
         return false;
     }
-
     let mut current = path.to_owned();
     for _ in 0..4 {
         if has_unsafe_http_path_chars_or_segments(&current) {
@@ -347,6 +350,14 @@ fn is_safe_http_path(path: &str) -> bool {
     !current.contains('%') && !has_unsafe_http_path_chars_or_segments(&current)
 }
 
+fn contains_encoded_slash_or_backslash(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.windows(3).any(|window| {
+        (window[0] == b'%' && matches!(window[1], b'2') && matches!(window[2], b'f' | b'F'))
+            || (window[0] == b'%' && matches!(window[1], b'5') && matches!(window[2], b'c' | b'C'))
+    })
+}
+
 fn is_safe_http_path_prefix(path: &str) -> bool {
     is_safe_http_path(path) && path != "/" && !path.ends_with('/')
 }
@@ -354,6 +365,8 @@ fn is_safe_http_path_prefix(path: &str) -> bool {
 fn has_unsafe_http_path_chars_or_segments(path: &str) -> bool {
     path.bytes()
         .any(|byte| byte.is_ascii_control() || matches!(byte, b'\\' | b'?' | b'#'))
+        || path.contains("//")
+        || contains_encoded_slash_or_backslash(path)
         || path
             .split('/')
             .any(|segment| segment == "." || segment == "..")
@@ -433,7 +446,7 @@ mod tests {
             version: 1,
             grants: vec![Grant {
                 id: "github_read".into(),
-                agent: "openclaw".into(),
+                agent: "my-agent".into(),
                 capability: "http.request".into(),
                 resource: "github".into(),
                 allow: AllowRule {
@@ -447,7 +460,7 @@ mod tests {
         };
         let request = ActionRequest {
             id: "act_1".into(),
-            agent_id: "openclaw".into(),
+            agent_id: "my-agent".into(),
             task_id: None,
             capability: "http.request".into(),
             resource: "github".into(),
@@ -475,7 +488,7 @@ mod tests {
 version: 1
 grants:
   - id: github_read
-    agent: openclaw
+    agent: my-agent
     capability: http.request
     resource: github
     allow:
@@ -605,15 +618,15 @@ grants:
 
     #[test]
     fn http_path_prefixes_match_segment_boundaries() {
-        assert!(path_matches_prefix(
+        assert!(http_path_matches_prefix(
             "/repos/example/repo/issues",
             "/repos/example/repo/issues"
         ));
-        assert!(path_matches_prefix(
+        assert!(http_path_matches_prefix(
             "/repos/example/repo/issues/1",
             "/repos/example/repo/issues"
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues-admin",
             "/repos/example/repo/issues"
         ));
@@ -623,35 +636,58 @@ grants:
     fn unsafe_http_paths_do_not_match_prefixes() {
         let prefix = "/repos/example/repo/issues";
 
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/../settings",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/%2e%2e/settings",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/%252e%252e/settings",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             r"/repos/example/repo/issues\..\settings",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/1?admin=true",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/1%3fadmin=true",
             prefix
         ));
-        assert!(!path_matches_prefix(
+        assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/1#fragment",
             prefix
         ));
-        assert!(!path_matches_prefix("repos/example/repo/issues/1", prefix));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues//1",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/%2fadmin",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/%5cadmin",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/%252fadmin",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/%255cadmin",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "repos/example/repo/issues/1",
+            prefix
+        ));
     }
 
     #[test]

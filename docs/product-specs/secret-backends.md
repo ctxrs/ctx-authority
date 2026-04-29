@@ -20,16 +20,6 @@ Implemented:
   - Linux Secret Service/libsecret
 - 1Password through `op read`
 
-Adapter candidates:
-
-- Doppler
-- Infisical
-- Bitwarden Secrets Manager
-- HashiCorp Vault
-- AWS Secrets Manager
-- GCP Secret Manager
-- Azure Key Vault
-
 ## Backend contract
 
 Backends support:
@@ -39,12 +29,13 @@ Backends support:
 - return secrets only to the broker execution path
 - redact values from errors and debug output
 
-The implementation exposes a `SecretBackend` trait and a serializable
-`SecretBackendConfig` factory for selecting fake, `.env`, 1Password, and OS
-keychain backends without binding the main CLI to a provider-specific workflow.
-Agent-facing execution builds its backend only from trusted local configuration.
-If a backend is configured but cannot be loaded, execution fails closed. The CLI
-must not silently fall back to the fake backend or another weaker source.
+The implementation exposes a `SecretBackend` trait, redacted `SecretLease`
+values, and a serializable `SecretBackendConfig` factory for selecting fake,
+`.env`, 1Password, and OS keychain backends without binding the main CLI to a
+provider-specific workflow. Agent-facing execution builds its backend only from
+trusted local configuration. If a backend is configured but cannot be loaded,
+execution fails closed. The CLI must not silently fall back to the fake backend
+or another weaker source.
 
 ## Reference model
 
@@ -95,7 +86,10 @@ keychain adapter. Production code uses the system store; tests use deterministic
 fake stores so the test suite never prompts for real keychain access and never
 requires real credentials.
 
-The configured service name scopes broker-owned entries. The current execution path resolves the trusted `default` reference for provider execution; action-supplied secret references are not honored. Resource-owned secret reference mapping is planned.
+The configured service name scopes broker-owned entries. Explicit JSON action
+requests resolve the trusted `default` reference for provider execution. Run
+profile HTTP resources resolve their configured `secret_ref` only after proxy
+authorization and profile matching succeed.
 
 Reference: https://docs.rs/keyring/latest/keyring/
 
@@ -104,7 +98,9 @@ Reference: https://docs.rs/keyring/latest/keyring/
 Agents may see logical capability/resource names. They should not receive raw
 secret values.
 
-Policy and audit output should expose only logical resource names and redacted backend metadata.
+Policy and audit output should expose only logical resource names and redacted
+backend metadata. Proxy receipts may include a hash of the secret reference as
+part of the profile rule hash, but they must not include the raw secret value.
 
 ## Notes
 

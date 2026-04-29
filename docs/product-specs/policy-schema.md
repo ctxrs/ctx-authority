@@ -15,7 +15,7 @@ grants:
       methods: [GET]
       hosts: [api.fake-github.local]
       path_prefixes:
-        - /repos/ctxrs/ctx-authority/issues
+        - /repos/example-org/example-repo/issues
   - id: fake_mail_send_requires_approval
     agent: demo
     capability: email.send
@@ -74,9 +74,9 @@ A grant is safe only when it is specific:
 
 Broad grants are avoided in examples.
 For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
-`path_prefixes` are all present and non-empty. Explicit wildcards can be added
-later, but omitted HTTP dimensions must not act as implicit wildcards. The
-`http.request` operation object may contain only `method`, `host`, and `path`.
+`path_prefixes` are all present and non-empty. Omitted HTTP dimensions do not
+act as implicit wildcards. The `http.request` operation object may contain only
+`method`, `host`, and `path`.
 HTTP grants must not specify email-only allow dimensions such as
 `recipient_domains`.
 
@@ -86,7 +86,7 @@ portion of a single bare `operation.to` email address. `email.send` operation
 objects may contain only `to` and `subject`. `http.request` and `email.send`
 payload objects may be omitted/null or contain only `body`. Display-name
 syntax, cc/bcc fields, subdomain wildcards, query-string fields, and
-multi-recipient payloads are planned schema work and must deny in v1.
+multi-recipient payloads are not accepted by the v1 schema and must deny.
 Email grants must not specify HTTP-only allow dimensions such as `methods`,
 `hosts`, or `path_prefixes`.
 
@@ -99,8 +99,8 @@ normalization:
 - Path prefixes and requested paths must not contain `.` or `..` segments.
 - Percent-encoded dot segments such as `%2e%2e` and double-encoded variants are
   unsafe and must deny or fail validation.
-- Backslashes, query strings, fragments, and control characters are invalid in
-  HTTP paths until the schema models them explicitly.
+- Backslashes, repeated slashes, encoded slashes, query strings, fragments, and
+  control characters are invalid in HTTP paths.
 - Prefix matching is exact or subtree-only: `/issues` matches `/issues/1`, but
   not `/issues-admin`.
 
