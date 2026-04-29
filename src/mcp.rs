@@ -1,5 +1,5 @@
 use crate::models::Receipt;
-use crate::receipts::receipt_from_json_str_strict;
+use crate::receipts::{receipt_from_json_str_strict, receipt_from_json_value_strict};
 use crate::Result;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -210,7 +210,7 @@ fn receipts_verify(arguments: &Value) -> Value {
 
 fn receipt_from_arguments(arguments: &Value) -> std::result::Result<Receipt, String> {
     if let Some(receipt) = arguments.get("receipt") {
-        return serde_json::from_value(receipt.clone())
+        return receipt_from_json_value_strict(receipt.clone())
             .map_err(|_| "receipt is not a valid receipt object".to_string());
     }
 
@@ -440,6 +440,28 @@ mod tests {
                 "name": "receipts.verify",
                 "arguments": {
                     "receipt_json": duplicate
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn receipt_object_rejects_missing_signed_fields() {
+        let mut receipt = sample_receipt("ed25519", "not-empty");
+        receipt.as_object_mut().unwrap().remove("approval");
+
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 34,
+            "method": "tools/call",
+            "params": {
+                "name": "receipts.verify",
+                "arguments": {
+                    "receipt": receipt
                 }
             }
         }))

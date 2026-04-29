@@ -233,6 +233,10 @@ pub fn receipt_from_json_str_strict(text: &str) -> Result<Receipt> {
         .deserialize(&mut deserializer)
         .map_err(AuthorityError::Json)?;
     deserializer.end().map_err(AuthorityError::Json)?;
+    receipt_from_json_value_strict(value)
+}
+
+pub fn receipt_from_json_value_strict(value: Value) -> Result<Receipt> {
     require_signed_receipt_fields(&value)?;
     Ok(serde_json::from_value(value)?)
 }
