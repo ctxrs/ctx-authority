@@ -9,25 +9,14 @@ COMMON_TEST_DATA = [
     "tests/**",
 ])
 
-REPO_SCAN_DATA = [
-    "AGENTS.md",
-    "ARCHITECTURE.md",
-    "BUILD.bazel",
-    "CONTRIBUTING.md",
-    "Cargo.lock",
-    "Cargo.toml",
-    "LICENSE",
-    "MODULE.bazel",
-    "MODULE.bazel.lock",
-    "README.md",
-    "SECURITY.md",
-] + glob([
-    ".github/workflows/**",
-    "docs/**",
-    "scripts/**",
-    "skills/**",
-    "src/**",
-    "tests/**",
+REPO_SCAN_DATA = glob([
+    "**",
+], exclude = [
+    ".git/**",
+    ".local/**",
+    "bazel-*",
+    "bazel-*/**",
+    "target/**",
 ], allow_empty = True)
 
 shell_test(

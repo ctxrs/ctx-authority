@@ -402,7 +402,7 @@ impl<'de> Visitor<'de> for NoDuplicateJsonValueVisitor {
         let mut object = Map::new();
         while let Some(key) = map.next_key::<String>()? {
             if object.contains_key(&key) {
-                return Err(de::Error::custom(format!("duplicate JSON key {key:?}")));
+                return Err(de::Error::custom("duplicate JSON key"));
             }
             let value = map.next_value_seed(NoDuplicateJsonValue)?;
             object.insert(key, value);
@@ -509,6 +509,18 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("missing signed field task"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_key_errors_do_not_echo_key_names() {
+        let err = json_value_from_str_no_duplicates(
+            r#"{"sk-test-secret-value-that-must-not-echo":1,"sk-test-secret-value-that-must-not-echo":2}"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("duplicate JSON key"), "{err}");
+        assert!(!err.contains("sk-test-secret-value"), "{err}");
     }
 
     #[test]
