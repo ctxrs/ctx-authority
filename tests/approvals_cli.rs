@@ -210,6 +210,48 @@ fn policy_check_denies_http_query_paths() {
 }
 
 #[test]
+fn policy_check_denies_http_query_fields_in_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("query-payload-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_query_payload",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues/1"
+  },
+  "payload": {
+    "query": "admin=true"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_denies_encoded_dot_segment_paths() {
     let temp = tempfile::tempdir().unwrap();
     let action_path = temp.path().join("encoded-dot-segment-action.json");
@@ -1003,7 +1045,7 @@ fn runtime_rejects_approval_bound_to_changed_payload() {
     };
 
     let err = runtime.execute(&request).unwrap_err().to_string();
-    assert!(err.contains("approval does not match payload or policy"));
+    assert!(err.contains("approval does not match action, payload, or policy"));
 }
 
 #[test]
@@ -1035,6 +1077,7 @@ fn runtime_rejects_expired_approvals_before_execution() {
 
     let events = audit.list(20).unwrap();
     assert!(events.iter().any(|(_, kind, _)| kind == "approval_expired"));
+    assert!(!events.iter().any(|(_, kind, _)| kind == "approval_granted"));
     assert!(
         events
             .iter()

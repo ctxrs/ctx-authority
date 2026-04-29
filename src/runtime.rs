@@ -59,6 +59,12 @@ impl<'a> BrokerRuntime<'a> {
                     .request(request, payload_hash.clone(), policy_hash.clone())
                 {
                     Ok(Some(record)) => {
+                        self.validate_approval_record(
+                            request,
+                            &record,
+                            &payload_hash,
+                            &policy_hash,
+                        )?;
                         self.audit.record(
                             "approval_granted",
                             &json!({
@@ -106,39 +112,6 @@ impl<'a> BrokerRuntime<'a> {
             }
         };
 
-        if let Some(record) = &approval {
-            if record.payload_hash != payload_hash || record.policy_hash != policy_hash {
-                self.audit.record(
-                    "execution_skipped",
-                    &json!({
-                        "action_request_id": request.id,
-                        "reason": "approval binding mismatch",
-                    }),
-                )?;
-                return Err(AuthorityError::ApprovalFailed(
-                    "approval does not match payload or policy".into(),
-                ));
-            }
-            if record.expires_at <= Utc::now() {
-                self.audit.record(
-                    "approval_expired",
-                    &json!({
-                        "action_request_id": request.id,
-                        "approval_id": record.approval_id.clone(),
-                        "expired_at": record.expires_at,
-                    }),
-                )?;
-                self.audit.record(
-                    "execution_skipped",
-                    &json!({
-                        "action_request_id": request.id,
-                        "reason": "approval expired",
-                    }),
-                )?;
-                return Err(AuthorityError::ApprovalFailed("approval expired".into()));
-            }
-        }
-
         let secret = match self.secret_backend {
             Some(backend) => Some(backend.resolve("default")?),
             None => None,
@@ -179,5 +152,49 @@ impl<'a> BrokerRuntime<'a> {
             &serde_json::to_value(&receipt).map_err(AuthorityError::Json)?,
         )?;
         Ok(receipt)
+    }
+
+    fn validate_approval_record(
+        &self,
+        request: &ActionRequest,
+        record: &crate::models::ApprovalRecord,
+        payload_hash: &str,
+        policy_hash: &str,
+    ) -> Result<()> {
+        if record.action_request_id != request.id
+            || record.payload_hash != payload_hash
+            || record.policy_hash != policy_hash
+        {
+            self.audit.record(
+                "execution_skipped",
+                &json!({
+                    "action_request_id": request.id,
+                    "reason": "approval binding mismatch",
+                }),
+            )?;
+            return Err(AuthorityError::ApprovalFailed(
+                "approval does not match action, payload, or policy".into(),
+            ));
+        }
+        if record.expires_at <= Utc::now() {
+            self.audit.record(
+                "approval_expired",
+                &json!({
+                    "action_request_id": request.id,
+                    "approval_id": record.approval_id.clone(),
+                    "expired_at": record.expires_at,
+                }),
+            )?;
+            self.audit.record(
+                "execution_skipped",
+                &json!({
+                    "action_request_id": request.id,
+                    "reason": "approval expired",
+                }),
+            )?;
+            return Err(AuthorityError::ApprovalFailed("approval expired".into()));
+        }
+
+        Ok(())
     }
 }
