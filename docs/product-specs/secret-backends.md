@@ -43,6 +43,9 @@ Backends should support:
 The implementation exposes a `SecretBackend` trait and a serializable
 `SecretBackendConfig` factory for selecting fake, `.env`, 1Password, and OS
 keychain backends without binding the main CLI to a provider-specific workflow.
+Agent-facing execution builds its backend only from trusted local configuration.
+If a backend is configured but cannot be loaded, execution fails closed. The CLI
+must not silently fall back to the fake backend or another weaker source.
 
 ## Reference model
 

@@ -1,19 +1,14 @@
 use anyhow::Context;
-use authority_broker::approvals::ApprovalProvider;
 use authority_broker::audit::AuditLog;
-use authority_broker::backends::FakeBackend;
+use authority_broker::boundary::action_request_from_json_str;
 use authority_broker::config::{AgentConfig, AppConfig, AppPaths, PolicyConfig};
+use authority_broker::execution_context::{load_policy_file, ExecutionContext};
 use authority_broker::models::ActionRequest;
 use authority_broker::policy::PolicyDocument;
-use authority_broker::providers::FakeProvider;
-use authority_broker::receipts::{
-    json_value_from_str_no_duplicates, receipt_from_json_str_strict, ReceiptSigner,
-};
-use authority_broker::runtime::BrokerRuntime;
+use authority_broker::receipts::{receipt_from_json_str_strict, ReceiptSigner};
 use clap::{Parser, Subcommand};
-use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "ctxa", about = "Local capability broker for agents")]
@@ -189,29 +184,9 @@ fn action(command: ActionCommand) -> anyhow::Result<()> {
     match command {
         ActionCommand::Request { file } => {
             let paths = AppPaths::discover()?;
-            paths.ensure()?;
-            let config = AppConfig::load(&paths.config_file)?;
-            let (agent, policy_config) = trusted_execution_context(&config)?;
-            let policy = load_trusted_policy(policy_config)?;
             let request = load_action(file)?;
-            let audit = AuditLog::open(&paths.audit_db)?;
-            let approvals = ApprovalProvider::require_explicit();
-            let provider = FakeProvider::new(&request.resource);
-            let backend = FakeBackend::new(BTreeMap::from([(
-                "default".to_string(),
-                "fake-secret-value".to_string(),
-            )]));
-            let signer = ReceiptSigner::load_or_create(&paths)?;
-            let runtime = BrokerRuntime {
-                trusted_agent_id: &agent.id,
-                policy: &policy,
-                audit: &audit,
-                approvals: &approvals,
-                provider: &provider,
-                secret_backend: Some(&backend),
-                signer: &signer,
-            };
-            let receipt = runtime.execute(&request)?;
+            let context = ExecutionContext::from_paths(&paths)?;
+            let receipt = context.execute(&request)?;
             println!("{}", serde_json::to_string_pretty(&receipt)?);
             Ok(())
         }
@@ -253,16 +228,13 @@ fn mcp(command: McpCommand) -> anyhow::Result<()> {
 }
 
 fn load_policy(path: PathBuf) -> anyhow::Result<PolicyDocument> {
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read policy {}", path.display()))?;
-    Ok(serde_yaml::from_str(&text)?)
+    load_policy_file(&path).with_context(|| format!("failed to read policy {}", path.display()))
 }
 
 fn load_action(path: PathBuf) -> anyhow::Result<ActionRequest> {
     let text = fs::read_to_string(&path)
         .with_context(|| format!("failed to read action {}", path.display()))?;
-    let value = json_value_from_str_no_duplicates(&text)?;
-    Ok(serde_json::from_value(value)?)
+    Ok(action_request_from_json_str(&text)?)
 }
 
 fn ensure_policy_exists(config: &AppConfig, policy_id: &str) -> anyhow::Result<()> {
@@ -271,45 +243,4 @@ fn ensure_policy_exists(config: &AppConfig, policy_id: &str) -> anyhow::Result<(
     } else {
         anyhow::bail!("trusted policy {policy_id:?} is not configured")
     }
-}
-
-fn trusted_execution_context(config: &AppConfig) -> anyhow::Result<(&AgentConfig, &PolicyConfig)> {
-    let executable_agents = config
-        .agents
-        .iter()
-        .filter(|agent| agent.policy.is_some())
-        .collect::<Vec<_>>();
-
-    let agent = match executable_agents.as_slice() {
-        [agent] => *agent,
-        [] => anyhow::bail!("no trusted executable agent is configured"),
-        _ => anyhow::bail!(
-            "multiple executable agents are configured; local CLI execution requires exactly one trusted agent"
-        ),
-    };
-
-    let policy_id = agent
-        .policy
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("trusted agent has no policy"))?;
-    let policy = config
-        .policies
-        .iter()
-        .find(|policy| policy.id == policy_id)
-        .ok_or_else(|| anyhow::anyhow!("trusted policy {policy_id:?} is not configured"))?;
-
-    Ok((agent, policy))
-}
-
-fn load_trusted_policy(policy_config: &PolicyConfig) -> anyhow::Result<PolicyDocument> {
-    let path = Path::new(&policy_config.path);
-    let policy = load_policy(path.to_path_buf())?;
-    let hash = policy.hash()?;
-    if hash != policy_config.hash {
-        anyhow::bail!(
-            "trusted policy {:?} hash changed; re-run ctxa policy trust before execution",
-            policy_config.id
-        );
-    }
-    Ok(policy)
 }

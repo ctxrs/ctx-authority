@@ -1,3 +1,4 @@
+pub use crate::boundary::json_value_from_str_no_duplicates;
 use crate::canonical::canonical_json_bytes;
 use crate::config::AppPaths;
 use crate::models::{
@@ -8,17 +9,14 @@ use base64::Engine;
 use chrono::Utc;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::OsRng;
-use serde::{
-    de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
-    Serialize,
-};
-use serde_json::{Map, Number, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-const RECEIPT_VERSION: &str = "authority.receipt.v1";
+pub const RECEIPT_VERSION: &str = "authority.receipt.v1";
 
 #[derive(Debug, Clone)]
 pub struct ReceiptSigner {
@@ -214,6 +212,7 @@ fn tighten_signing_key_permissions(_path: &std::path::Path) -> Result<()> {
 }
 
 pub fn verify_receipt(receipt: &Receipt, verifying_key: &VerifyingKey) -> Result<()> {
+    ensure_supported_receipt_version(&receipt.receipt_version)?;
     let payload = receipt_signing_payload(receipt)?;
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&receipt.signature.sig)
@@ -230,15 +229,6 @@ pub fn verify_receipt(receipt: &Receipt, verifying_key: &VerifyingKey) -> Result
 pub fn receipt_from_json_str_strict(text: &str) -> Result<Receipt> {
     let value = json_value_from_str_no_duplicates(text)?;
     receipt_from_json_value_strict(value)
-}
-
-pub fn json_value_from_str_no_duplicates(text: &str) -> Result<Value> {
-    let mut deserializer = serde_json::Deserializer::from_str(text);
-    let value = NoDuplicateJsonValue
-        .deserialize(&mut deserializer)
-        .map_err(AuthorityError::Json)?;
-    deserializer.end().map_err(AuthorityError::Json)?;
-    Ok(value)
 }
 
 pub fn receipt_from_json_value_strict(value: Value) -> Result<Receipt> {
@@ -268,6 +258,11 @@ fn require_signed_receipt_fields(value: &Value) -> Result<()> {
     ] {
         require_object_field(object, field, "receipt")?;
     }
+    let receipt_version = object
+        .get("receipt_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AuthorityError::Receipt("receipt version must be a string".into()))?;
+    ensure_supported_receipt_version(receipt_version)?;
 
     let execution = object
         .get("execution")
@@ -310,105 +305,19 @@ fn require_object_field(object: &Map<String, Value>, field: &str, context: &str)
     }
 }
 
+fn ensure_supported_receipt_version(version: &str) -> Result<()> {
+    if version == RECEIPT_VERSION {
+        Ok(())
+    } else {
+        Err(AuthorityError::Receipt(
+            "unsupported receipt version".into(),
+        ))
+    }
+}
+
 pub fn payload_hash<T: Serialize>(payload: &T) -> Result<String> {
     let bytes = canonical_json_bytes(payload)?;
     Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
-}
-
-struct NoDuplicateJsonValue;
-
-impl<'de> DeserializeSeed<'de> for NoDuplicateJsonValue {
-    type Value = Value;
-
-    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_any(NoDuplicateJsonValueVisitor)
-    }
-}
-
-struct NoDuplicateJsonValueVisitor;
-
-impl<'de> Visitor<'de> for NoDuplicateJsonValueVisitor {
-    type Value = Value;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("valid JSON without duplicate object keys")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
-        Ok(Value::Bool(value))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
-        Ok(Value::Number(Number::from(value)))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
-        Ok(Value::Number(Number::from(value)))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        Number::from_f64(value)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("invalid JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        Ok(Value::String(value.to_owned()))
-    }
-
-    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
-        Ok(Value::String(value))
-    }
-
-    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        NoDuplicateJsonValue.deserialize(deserializer)
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut values = Vec::new();
-        while let Some(value) = seq.next_element_seed(NoDuplicateJsonValue)? {
-            values.push(value);
-        }
-        Ok(Value::Array(values))
-    }
-
-    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut object = Map::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if object.contains_key(&key) {
-                return Err(de::Error::custom("duplicate JSON key"));
-            }
-            let value = map.next_value_seed(NoDuplicateJsonValue)?;
-            object.insert(key, value);
-        }
-        Ok(Value::Object(object))
-    }
 }
 
 fn receipt_signing_payload(receipt: &Receipt) -> Result<Vec<u8>> {
@@ -509,6 +418,46 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("missing signed field task"), "{err}");
+    }
+
+    #[test]
+    fn strict_receipt_parse_rejects_unsupported_versions() {
+        let signer = ReceiptSigner::deterministic_for_tests([7; 32]);
+        let request = ActionRequest {
+            id: "act".into(),
+            agent_id: "demo".into(),
+            task_id: None,
+            capability: "fake.action".into(),
+            resource: "fake".into(),
+            operation: json!({}),
+            payload: json!({"x": 1}),
+            payload_hash: None,
+            idempotency_key: None,
+            requested_at: None,
+        };
+        let receipt = signer
+            .issue(
+                "local".into(),
+                &request,
+                payload_hash(&request.payload).unwrap(),
+                "sha256:policy".into(),
+                None,
+                ProviderExecution {
+                    status: "succeeded".into(),
+                    provider: "fake".into(),
+                    provider_request_id: None,
+                    result: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        let mut receipt_value = serde_json::to_value(&receipt).unwrap();
+        receipt_value["receipt_version"] = Value::String("authority.receipt.v999".into());
+        let unsupported_version = serde_json::to_string(&receipt_value).unwrap();
+
+        let err = receipt_from_json_str_strict(&unsupported_version)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unsupported receipt version"), "{err}");
     }
 
     #[test]

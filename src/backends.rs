@@ -40,7 +40,7 @@ pub enum SecretBackendKind {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SecretBackendConfig {
     Fake {
         #[serde(default)]
@@ -155,7 +155,8 @@ impl fmt::Debug for EnvFileBackend {
 
 impl EnvFileBackend {
     pub fn load(path: PathBuf) -> Result<Self> {
-        let text = fs::read_to_string(path)?;
+        let text = fs::read_to_string(path)
+            .map_err(|_| AuthorityError::SecretBackend("failed to read .env file".into()))?;
         Self::parse(&text)
     }
 

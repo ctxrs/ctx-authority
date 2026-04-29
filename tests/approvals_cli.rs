@@ -1,7 +1,8 @@
 use assert_cmd::Command;
 use authority_broker::approvals::ApprovalProvider;
 use authority_broker::audit::AuditLog;
-use authority_broker::backends::{FakeBackend, SecretLease};
+use authority_broker::backends::{FakeBackend, SecretBackendConfig, SecretLease};
+use authority_broker::config::AppConfig;
 use authority_broker::models::{
     ActionRequest, PolicyDecision, PolicyDecisionKind, ProviderExecution, Receipt,
 };
@@ -11,6 +12,7 @@ use authority_broker::receipts::{action_hash, ReceiptSigner};
 use authority_broker::runtime::BrokerRuntime;
 use authority_broker::{AuthorityError, Result};
 use predicates::prelude::*;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,6 +50,14 @@ fn configure_trusted_agent_path(home: &Path, policy_path: &Path) {
         .args(["agent", "create", "demo", "--policy", "default"])
         .assert()
         .success();
+}
+
+fn configure_secret_backend(home: &Path, secret_backend: SecretBackendConfig) {
+    let config_path = home.join("config.yaml");
+    let mut config: AppConfig =
+        serde_yaml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.secret_backend = Some(secret_backend);
+    fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
 }
 
 #[test]
@@ -397,6 +407,70 @@ fn action_request_runs_allowed_action_without_approval_record() {
     let receipt: Receipt = serde_json::from_slice(&output).unwrap();
     assert_eq!(receipt.execution.status, "succeeded");
     assert!(receipt.approval.is_none());
+    assert_eq!(
+        receipt.execution.result.get("used_secret"),
+        Some(&json!(false))
+    );
+}
+
+#[test]
+fn action_request_uses_configured_env_secret_backend() {
+    let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
+    let env_path = home.path().join("secrets.env");
+    fs::write(&env_path, "default=configured-secret-value\n").unwrap();
+    configure_secret_backend(
+        home.path(),
+        SecretBackendConfig::EnvFile {
+            path: env_path.clone(),
+        },
+    );
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("configured-secret-value").not())
+        .get_output()
+        .stdout
+        .clone();
+
+    let receipt: Receipt = serde_json::from_slice(&output).unwrap();
+    assert_eq!(receipt.execution.status, "succeeded");
+    assert_eq!(
+        receipt.execution.result.get("used_secret"),
+        Some(&json!(true))
+    );
+}
+
+#[test]
+fn action_request_fails_when_configured_secret_backend_is_invalid() {
+    let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
+    configure_secret_backend(
+        home.path(),
+        SecretBackendConfig::EnvFile {
+            path: home.path().join("missing.env"),
+        },
+    );
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to read .env file"));
 }
 
 #[test]
@@ -1114,6 +1188,38 @@ fn receipts_verify_rejects_missing_signed_null_fields() {
         .stderr(predicate::str::contains(
             "receipt missing signed field approval",
         ));
+}
+
+#[test]
+fn receipts_verify_rejects_unsupported_receipt_versions() {
+    let home = tempfile::tempdir().unwrap();
+    configure_trusted_agent(home.path(), "demo-policy.yaml");
+    let receipt_path = home.path().join("unsupported-version-receipt.json");
+
+    let output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "action",
+            "request",
+            "--file",
+            fixture("demo-action.json").to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let mut receipt: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    receipt["receipt_version"] = serde_json::Value::String("authority.receipt.v999".into());
+    fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "verify", receipt_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported receipt version"));
 }
 
 #[test]

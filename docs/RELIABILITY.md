@@ -13,6 +13,8 @@ The local broker should fail closed.
   reconciliation before retry when idempotency matters.
 - If a secret backend fails, do not fall back to weaker sources unless policy
   explicitly allows it.
+- Agent-facing execution must construct runtime dependencies through the trusted
+  execution context, not by hand in individual command handlers.
 
 ## Deterministic tests
 

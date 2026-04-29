@@ -1,7 +1,6 @@
+use crate::boundary::json_value_from_str_no_duplicates;
 use crate::models::Receipt;
-use crate::receipts::{
-    json_value_from_str_no_duplicates, receipt_from_json_str_strict, receipt_from_json_value_strict,
-};
+use crate::receipts::{receipt_from_json_str_strict, receipt_from_json_value_strict};
 use crate::Result;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -459,6 +458,28 @@ mod tests {
         let response = handle_message(json!({
             "jsonrpc": "2.0",
             "id": 34,
+            "method": "tools/call",
+            "params": {
+                "name": "receipts.verify",
+                "arguments": {
+                    "receipt": receipt
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn receipt_object_rejects_unsupported_versions() {
+        let mut receipt = sample_receipt("ed25519", "not-empty");
+        receipt["receipt_version"] = Value::String("authority.receipt.v999".into());
+
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 35,
             "method": "tools/call",
             "params": {
                 "name": "receipts.verify",
