@@ -10,4 +10,5 @@ Read these specs before changing broker behavior:
 - [provider-adapters.md](provider-adapters.md)
 - [approval-flow.md](approval-flow.md)
 - [agent-skill.md](agent-skill.md)
+- [distribution.md](distribution.md)
 - [design-decisions.md](design-decisions.md)

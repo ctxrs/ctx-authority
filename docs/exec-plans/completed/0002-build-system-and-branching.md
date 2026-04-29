@@ -30,9 +30,9 @@ The repository has Bazel wrapper targets for granular local feedback, Cargo buil
 
 ## Build output
 
-Wrapper scripts set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `AUTHORITY_BROKER_CACHE_ROOT` can override the cache root; when unset, the scripts use the shared ctx cache when available and a temp-dir fallback otherwise.
+Wrapper scripts set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `CTXA_CACHE_ROOT` can override the cache root; when unset, the scripts use the shared ctx cache when available and a temp-dir fallback otherwise.
 
-`CARGO_HOME` defaults to `/tmp/authority-broker-cargo-home` and can be overridden with `AUTHORITY_BROKER_CARGO_HOME`. `sccache` can be enabled with `AUTHORITY_BROKER_USE_SCCACHE=1`.
+`CARGO_HOME` defaults to `/tmp/ctxa-cargo-home` and can be overridden with `CTXA_CARGO_HOME`. `sccache` can be enabled with `CTXA_USE_SCCACHE=1`.
 
 The repo does not commit a machine-specific `.cargo/config.toml`.
 

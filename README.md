@@ -4,7 +4,7 @@ Local capability control for AI agents.
 
 `ctx authority` lets agents use real tools without handing them raw secrets. An agent asks for an action, `ctxa` checks policy, requests approval when needed, executes through a provider adapter, writes an audit log, and returns a signed receipt.
 
-This project is part of [ctx](https://ctx.rs).
+This project is part of [ctx](https://ctx.rs). Product pages and install docs live under `https://ctx.rs/authority`.
 
 ```text
 agent -> ctxa -> policy -> approval -> provider -> receipt
@@ -24,7 +24,19 @@ Agents are becoming useful enough to send email, call APIs, manage tickets, and 
 
 ## Install
 
-From this repository:
+With Homebrew:
+
+```sh
+brew install ctxrs/tap/ctxa
+```
+
+With Cargo:
+
+```sh
+cargo install ctxa --locked
+```
+
+From a local checkout:
 
 ```sh
 cargo install --path .
@@ -147,7 +159,7 @@ The Bazel wrappers keep Cargo build output outside the repository and use the sh
 - [ARCHITECTURE.md](ARCHITECTURE.md): system layout and boundaries
 - [docs/product-specs](docs/product-specs): behavior specs and acceptance criteria
 - [docs/SECURITY.md](docs/SECURITY.md): security model
-- [skills/authority-broker](skills/authority-broker): agent instructions for using `ctxa`
+- [skills/ctx-authority](skills/ctx-authority): agent instructions for using `ctxa`
 
 ## Planned Work
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 export PATH="${HOME:-}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
-authority_broker_workspace_root() {
+ctxa_workspace_root() {
   if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" && -f "$BUILD_WORKSPACE_DIRECTORY/Cargo.toml" ]]; then
     printf '%s\n' "$BUILD_WORKSPACE_DIRECTORY"
     return 0
@@ -31,52 +31,52 @@ authority_broker_workspace_root() {
     return 0
   fi
 
-  echo "could not locate authority-broker workspace root" >&2
+  echo "could not locate ctx authority workspace root" >&2
   return 1
 }
 
-authority_broker_cache_root() {
+ctxa_cache_root() {
   if [[ -n "${TEST_TMPDIR:-}" ]]; then
-    local test_cache_root="$TEST_TMPDIR/authority-broker-cache"
+    local test_cache_root="$TEST_TMPDIR/ctxa-cache"
     mkdir -p "$test_cache_root"
     printf '%s\n' "$test_cache_root"
     return 0
   fi
 
-  local cache_root="${AUTHORITY_BROKER_CACHE_ROOT:-/Volumes/ctx-cache/authority-broker}"
+  local cache_root="${CTXA_CACHE_ROOT:-/Volumes/ctx-cache/ctxa}"
   if mkdir -p "$cache_root" 2>/dev/null; then
     printf '%s\n' "$cache_root"
     return 0
   fi
 
-  cache_root="${TMPDIR:-/tmp}/authority-broker-cache"
+  cache_root="${TMPDIR:-/tmp}/ctxa-cache"
   mkdir -p "$cache_root"
   printf '%s\n' "$cache_root"
 }
 
-authority_broker_cargo_home() {
-  if [[ -n "${AUTHORITY_BROKER_CARGO_HOME:-}" ]]; then
-    printf '%s\n' "$AUTHORITY_BROKER_CARGO_HOME"
+ctxa_cargo_home() {
+  if [[ -n "${CTXA_CARGO_HOME:-}" ]]; then
+    printf '%s\n' "$CTXA_CARGO_HOME"
     return 0
   fi
 
-  local package_cache_root="/tmp/authority-broker-cargo-home"
+  local package_cache_root="/tmp/ctxa-cargo-home"
   mkdir -p "$package_cache_root"
   (cd "$package_cache_root" && pwd)
 }
 
-cache_root="$(authority_broker_cache_root)"
+cache_root="$(ctxa_cache_root)"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache_root/target}"
 export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 if [[ -z "${CARGO_HOME+x}" ]]; then
-  export CARGO_HOME="$(authority_broker_cargo_home)"
+  export CARGO_HOME="$(ctxa_cargo_home)"
 fi
 
 if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
-  use_sccache="${AUTHORITY_BROKER_USE_SCCACHE:-}"
+  use_sccache="${CTXA_USE_SCCACHE:-}"
   if [[ -z "$use_sccache" ]]; then
     case "$(uname -s)" in
       Darwin) use_sccache=0 ;;

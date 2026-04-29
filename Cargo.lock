@@ -92,7 +92,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "authority-broker"
+name = "ctxa"
 version = "0.1.0"
 dependencies = [
  "anyhow",

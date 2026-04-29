@@ -54,7 +54,7 @@ Request:
 Response:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"authority-broker","title":"Authority Broker","version":"0.1.0"},"instructions":"Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ctxa","title":"ctx authority","version":"0.1.0"},"instructions":"Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."}}
 ```
 
 Tool list request:

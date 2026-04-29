@@ -661,10 +661,10 @@ exit 1
     #[test]
     fn os_keychain_backend_can_use_fake_store() {
         let backend = OsKeychainBackend::with_store(
-            "authority-broker",
+            "ctx-authority",
             FakeKeychainStore {
                 values: BTreeMap::from([(
-                    ("authority-broker".into(), "github".into()),
+                    ("ctx-authority".into(), "github".into()),
                     "secret-value".into(),
                 )]),
             },

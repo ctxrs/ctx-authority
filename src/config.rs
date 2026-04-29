@@ -19,7 +19,7 @@ impl AppPaths {
             return Ok(Self::for_home(PathBuf::from(home)));
         }
 
-        let dirs = ProjectDirs::from("rs", "ctx", "authority-broker").ok_or_else(|| {
+        let dirs = ProjectDirs::from("rs", "ctx", "authority").ok_or_else(|| {
             AuthorityError::Config("could not resolve project directories".into())
         })?;
         Ok(Self::for_home(dirs.config_dir().to_path_buf()))

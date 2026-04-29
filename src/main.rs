@@ -1,12 +1,12 @@
 use anyhow::Context;
-use authority_broker::audit::AuditLog;
-use authority_broker::boundary::action_request_from_json_str;
-use authority_broker::config::{AgentConfig, AppConfig, AppPaths, PolicyConfig};
-use authority_broker::execution_context::{load_policy_file, ExecutionContext};
-use authority_broker::models::ActionRequest;
-use authority_broker::policy::PolicyDocument;
-use authority_broker::receipts::{receipt_from_json_str_strict, ReceiptSigner};
 use clap::{Parser, Subcommand};
+use ctxa::audit::AuditLog;
+use ctxa::boundary::action_request_from_json_str;
+use ctxa::config::{AgentConfig, AppConfig, AppPaths, PolicyConfig};
+use ctxa::execution_context::{load_policy_file, ExecutionContext};
+use ctxa::models::ActionRequest;
+use ctxa::policy::PolicyDocument;
+use ctxa::receipts::{receipt_from_json_str_strict, ReceiptSigner};
 use std::fs;
 use std::path::PathBuf;
 
@@ -221,7 +221,7 @@ fn mcp(command: McpCommand) -> anyhow::Result<()> {
         McpCommand::Serve => {
             let stdin = std::io::stdin();
             let mut stdout = std::io::stdout();
-            authority_broker::mcp::serve_stdio(stdin.lock(), &mut stdout)?;
+            ctxa::mcp::serve_stdio(stdin.lock(), &mut stdout)?;
             Ok(())
         }
     }

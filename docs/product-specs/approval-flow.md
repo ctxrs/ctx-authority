@@ -89,7 +89,7 @@ grants:
       methods: [GET]
       hosts: [api.github.com]
       path_prefixes:
-        - /repos/ctx-rs/authority-broker/issues
+        - /repos/ctxrs/ctx-authority/issues
 ```
 
 Planned time-bounded grant shape:

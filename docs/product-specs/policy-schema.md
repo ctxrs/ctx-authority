@@ -15,7 +15,7 @@ grants:
       methods: [GET]
       hosts: [api.fake-github.local]
       path_prefixes:
-        - /repos/ctx-rs/authority-broker/issues
+        - /repos/ctxrs/ctx-authority/issues
   - id: fake_mail_send_requires_approval
     agent: demo
     capability: email.send

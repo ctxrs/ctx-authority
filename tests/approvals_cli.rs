@@ -1,16 +1,14 @@
 use assert_cmd::Command;
-use authority_broker::approvals::ApprovalProvider;
-use authority_broker::audit::AuditLog;
-use authority_broker::backends::{FakeBackend, SecretBackendConfig, SecretLease};
-use authority_broker::config::AppConfig;
-use authority_broker::models::{
-    ActionRequest, PolicyDecision, PolicyDecisionKind, ProviderExecution, Receipt,
-};
-use authority_broker::policy::PolicyDocument;
-use authority_broker::providers::{FakeProvider, ProviderAdapter};
-use authority_broker::receipts::{action_hash, ReceiptSigner};
-use authority_broker::runtime::BrokerRuntime;
-use authority_broker::{AuthorityError, Result};
+use ctxa::approvals::ApprovalProvider;
+use ctxa::audit::AuditLog;
+use ctxa::backends::{FakeBackend, SecretBackendConfig, SecretLease};
+use ctxa::config::AppConfig;
+use ctxa::models::{ActionRequest, PolicyDecision, PolicyDecisionKind, ProviderExecution, Receipt};
+use ctxa::policy::PolicyDocument;
+use ctxa::providers::{FakeProvider, ProviderAdapter};
+use ctxa::receipts::{action_hash, ReceiptSigner};
+use ctxa::runtime::BrokerRuntime;
+use ctxa::{AuthorityError, Result};
 use predicates::prelude::*;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -96,7 +94,7 @@ fn policy_check_denies_when_no_grant_matches() {
   "operation": {
     "method": "POST",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1"
+    "path": "/repos/ctxrs/ctx-authority/issues/1"
   },
   "payload": {}
 }"#,
@@ -137,7 +135,7 @@ fn policy_check_denies_path_prefix_siblings() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues-admin"
+    "path": "/repos/ctxrs/ctx-authority/issues-admin"
   },
   "payload": {}
 }"#,
@@ -177,7 +175,7 @@ fn policy_check_denies_dot_segment_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/../settings"
+    "path": "/repos/ctxrs/ctx-authority/issues/../settings"
   },
   "payload": {}
 }"#,
@@ -217,7 +215,7 @@ fn policy_check_denies_http_query_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1?admin=true"
+    "path": "/repos/ctxrs/ctx-authority/issues/1?admin=true"
   },
   "payload": {}
 }"#,
@@ -257,7 +255,7 @@ fn policy_check_denies_http_query_fields_in_payload() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1"
+    "path": "/repos/ctxrs/ctx-authority/issues/1"
   },
   "payload": {
     "query": "admin=true"
@@ -300,7 +298,7 @@ fn policy_check_rejects_duplicate_action_json_keys() {
     "method": "POST",
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1"
+    "path": "/repos/ctxrs/ctx-authority/issues/1"
   },
   "payload": {}
 }"#,
@@ -335,7 +333,7 @@ fn policy_check_denies_encoded_dot_segment_paths() {
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/%2e%2e/settings"
+    "path": "/repos/ctxrs/ctx-authority/issues/%2e%2e/settings"
   },
   "payload": {}
 }"#,
@@ -656,7 +654,7 @@ grants:
     allow:
       methods: [GET]
       hosts: [api.fake-github.local]
-      path_prefixes: [/repos/ctx-rs/authority-broker]
+      path_prefixes: [/repos/ctxrs/ctx-authority]
 "#,
     )
     .unwrap();
@@ -1062,7 +1060,7 @@ grants:
     allow:
       methods: [GET]
       hosts: [api.fake-github.local]
-      path_prefixes: ['/repos/ctx-rs/authority-broker/issues/']
+      path_prefixes: ['/repos/ctxrs/ctx-authority/issues/']
 "#,
     )
     .unwrap();
@@ -1363,7 +1361,7 @@ fn runtime_action_hash_includes_operation() {
     first.id = "act_one".into();
     second.id = "act_two".into();
     second.operation["path"] =
-        serde_json::Value::String("/repos/ctx-rs/authority-broker/issues/2".into());
+        serde_json::Value::String("/repos/ctxrs/ctx-authority/issues/2".into());
 
     assert_ne!(action_hash(&first).unwrap(), action_hash(&second).unwrap());
 }

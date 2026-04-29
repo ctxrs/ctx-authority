@@ -10,8 +10,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_TARGET_DIR: ${{ runner.temp }}/authority-broker-target
-  SCCACHE_DIR: ${{ runner.temp }}/authority-broker-sccache
+  CARGO_TARGET_DIR: ${{ runner.temp }}/ctxa-target
+  SCCACHE_DIR: ${{ runner.temp }}/ctxa-sccache
   RUSTC_WRAPPER: ""
   CARGO_BUILD_JOBS: "2"
 

@@ -36,8 +36,8 @@ The default test suite should be offline.
 - Cargo build output must stay outside the repository through the Bazel wrapper
   environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
   commands.
-- Cargo package cache state defaults to `/tmp/authority-broker-cargo-home` and
-  can be overridden with `AUTHORITY_BROKER_CARGO_HOME`. This keeps package-cache
+- Cargo package cache state defaults to `/tmp/ctxa-cargo-home` and can be
+  overridden with `CTXA_CARGO_HOME`. This keeps package-cache
   locks isolated from unrelated local work.
 - `sccache` must be opt-in where the local wrapper is known to be flaky.
 - Wrapper scripts should use locked dependencies where Cargo supports it.

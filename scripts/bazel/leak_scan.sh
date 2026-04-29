@@ -2,7 +2,7 @@
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/env.sh"
-cd "$(authority_broker_workspace_root)"
+cd "$(ctxa_workspace_root)"
 
 patterns=(
   '-----BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----'
@@ -20,7 +20,7 @@ combined_pattern="$(IFS='|'; echo "${patterns[*]}")"
 scanner_status=0
 
 set +e
-if [[ "${AUTHORITY_BROKER_LEAK_SCAN_BACKEND:-}" != "grep" ]] && command -v rg >/dev/null 2>&1; then
+if [[ "${CTXA_LEAK_SCAN_BACKEND:-}" != "grep" ]] && command -v rg >/dev/null 2>&1; then
   rg -n --hidden --glob '!target/**' --glob '!bazel-*/**' --glob '!.git/**' --glob '!.local/**' --glob '!*.log' --glob '!*.sqlite' --glob '!*.sqlite3' --regexp "$combined_pattern" .
   scanner_status=$?
 else

@@ -1,6 +1,6 @@
 # Architecture
 
-`authority-broker` is the local capability broker for `ctx authority`.
+`ctxa` is the local capability broker for `ctx authority`.
 
 It is useful by itself in offline/local mode and is designed to work as the
 open-source edge component for hosted `ctx authority` deployments.

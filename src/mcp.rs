@@ -83,8 +83,8 @@ fn handle_initialize(id: Value, message: &Value) -> Value {
                 }
             },
             "serverInfo": {
-                "name": "authority-broker",
-                "title": "Authority Broker",
+                "name": "ctxa",
+                "title": "ctx authority",
                 "version": env!("CARGO_PKG_VERSION")
             },
             "instructions": "Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."
@@ -96,7 +96,7 @@ fn tools() -> Vec<Value> {
     vec![
         json!({
             "name": "capabilities.list",
-            "title": "List Authority Broker Capabilities",
+            "title": "List ctx authority capabilities",
             "description": "List the MCP tools and broker action capabilities exposed by this local server.",
             "inputSchema": {
                 "type": "object",

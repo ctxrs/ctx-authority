@@ -2,7 +2,7 @@
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/env.sh"
-cd "$(authority_broker_workspace_root)"
+cd "$(ctxa_workspace_root)"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

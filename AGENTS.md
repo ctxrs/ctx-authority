@@ -5,8 +5,8 @@ and comment as publishable.
 
 ## What this repo is
 
-`authority-broker` is the local edge component for agent capability control. It
-lets agents request actions without receiving raw durable credentials.
+This repository contains `ctxa`, the local CLI for `ctx authority`. It lets
+agents request actions without receiving raw durable credentials.
 
 Core loop:
 

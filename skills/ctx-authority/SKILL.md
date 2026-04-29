@@ -1,4 +1,4 @@
-# authority-broker
+# ctx authority
 
 Use `ctxa` when you need to perform an action that may require credentials,
 approval, or an audit trail.

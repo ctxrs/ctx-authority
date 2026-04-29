@@ -6,7 +6,7 @@
   "operation": {
     "method": "GET",
     "host": "api.fake-github.local",
-    "path": "/repos/ctx-rs/authority-broker/issues/1"
+    "path": "/repos/ctxrs/ctx-authority/issues/1"
   },
   "payload": {},
   "idempotency_key": "idem_demo"
