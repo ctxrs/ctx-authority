@@ -32,7 +32,6 @@ ctxa init
 ctxa agent create demo
 ctxa policy check --policy policy.yaml --file action.json
 ctxa action request --policy policy.yaml --file action.json
-ctxa action request --policy policy.yaml --file risky-action.json --approval approve
 ctxa log
 ctxa receipts verify receipt.json
 ctxa mcp serve
@@ -49,17 +48,21 @@ The demo must run without internet:
 - fake GitHub provider accepts the secret internally.
 - policy allows fake GitHub read.
 - policy requires approval for fake Mailgun send.
-- approval is accepted locally.
-- fake Mailgun records execution.
+- approval-required actions fail closed until a real local approval provider is
+  implemented.
+- fake Mailgun approval execution is covered only through internal runtime
+  tests.
 - receipt verifies.
 
 ## Current closed-system gate
 
 The current automated gate covers the CLI flow with fake providers, including
-policy allow/deny/approval decisions, explicit test approval, audit records,
-local receipt signature verification, tamper rejection, and fake-secret leak
-checks. MCP coverage is limited to the implemented metadata and receipt-shape
-tools until action execution is added to MCP.
+policy allow/deny/approval-required decisions, fail-closed approval behavior,
+audit records, local receipt signature verification, tamper rejection, and
+fake-secret leak checks. Internal runtime tests cover approved/rejected approval
+records without exposing caller-controlled approval to the agent-facing CLI. MCP
+coverage is limited to the implemented metadata and receipt-shape tools until
+action execution is added to MCP.
 
 ## Done means
 

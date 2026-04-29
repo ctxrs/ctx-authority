@@ -1,4 +1,5 @@
 use crate::models::Receipt;
+use crate::receipts::receipt_from_json_str_strict;
 use crate::Result;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -212,7 +213,7 @@ fn receipt_from_arguments(arguments: &Value) -> std::result::Result<Receipt, Str
     }
 
     if let Some(receipt_json) = arguments.get("receipt_json").and_then(Value::as_str) {
-        return serde_json::from_str(receipt_json)
+        return receipt_from_json_str_strict(receipt_json)
             .map_err(|_| "receipt_json is not a valid receipt".to_string());
     }
 
@@ -395,6 +396,35 @@ mod tests {
             response["result"]["structuredContent"]["mode"],
             "structural"
         );
+    }
+
+    #[test]
+    fn receipt_json_rejects_duplicate_keys() {
+        let receipt = sample_receipt("ed25519", "not-empty");
+        let receipt_json = serde_json::to_string_pretty(&receipt).unwrap();
+        let duplicate = receipt_json.replacen(
+            r#""redacted": true"#,
+            r#""redacted": false,
+          "redacted": true"#,
+            1,
+        );
+        assert_ne!(duplicate, receipt_json);
+
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 33,
+            "method": "tools/call",
+            "params": {
+                "name": "receipts.verify",
+                "arguments": {
+                    "receipt_json": duplicate
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
     }
 
     #[test]

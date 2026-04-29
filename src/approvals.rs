@@ -84,8 +84,7 @@ impl ApprovalProvider {
                 }))
             }
             ApprovalMode::RequireExplicit => Err(AuthorityError::ApprovalRequired(
-                "approval is required; no approval provider or explicit test approval was selected"
-                    .into(),
+                "approval is required; no approval provider is configured".into(),
             )),
             ApprovalMode::Reject => Ok(None),
         }

@@ -34,13 +34,10 @@ Action hash: sha256:...
 Approve? [y/N]
 ```
 
-For deterministic local tests, `ctxa action request` may also be run with
-`--approval approve` or `--approval reject`. The same behavior can be selected
-with `CTXA_APPROVAL_MODE=approve` or `CTXA_APPROVAL_MODE=reject`.
-
 If no approval mode or approval UI is configured, approval-required actions must
-fail closed. Test auto-approval is only available through the explicit flag or
-environment variable above.
+fail closed. Test auto-approval is available only inside the Rust test harness
+and must not be selectable by an agent through CLI flags, MCP arguments, or
+environment variables.
 
 If there is a local daemon, approval can happen from another terminal:
 

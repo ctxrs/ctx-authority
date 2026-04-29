@@ -16,7 +16,7 @@ Early implementation with SDLC gates.
 | Policy engine | Partial | v1 YAML allow/deny/approval decisions implemented with strict field and version validation. |
 | Secret backends | Partial | Fake, `.env`, OS keychain abstraction, and 1Password adapter are implemented. |
 | Provider adapters | Partial | Fake provider adapter implemented; real adapters are not in v1. |
-| Approvals | Partial | Explicit test approval/rejection and fail-closed default implemented. Human TUI/daemon approval is planned. |
+| Approvals | Partial | Fail-closed CLI behavior and internal approval-provider tests implemented. Human TUI/daemon approval is planned. |
 | Audit log | Partial | SQLite audit implemented for decisions, attempts, successes, and failures. |
 | Receipts | Partial | Canonical JSON plus Ed25519 signing and local verification implemented. |
 | Tests | Partial | Unit tests, integration tests, Bazel wrappers, CLI smoke test, and leak scan are wired. More acceptance coverage is still needed. |

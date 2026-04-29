@@ -341,33 +341,6 @@ fn action_request_runs_allowed_action_without_approval_record() {
 }
 
 #[test]
-fn action_request_auto_approves_approval_required_action() {
-    let home = tempfile::tempdir().unwrap();
-    let output = ctxa()
-        .env("CTXA_HOME", home.path())
-        .args([
-            "action",
-            "request",
-            "--policy",
-            fixture("approval-required-policy.yaml").to_str().unwrap(),
-            "--file",
-            fixture("approval-required-action.json").to_str().unwrap(),
-            "--approval",
-            "approve",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-
-    let receipt: Receipt = serde_json::from_slice(&output).unwrap();
-    let approval = receipt.approval.expect("approval receipt");
-    assert!(approval.required);
-    assert_eq!(approval.approved_by.as_deref(), Some("local-test-approver"));
-}
-
-#[test]
 fn action_request_requires_explicit_approval_provider_by_default() {
     let home = tempfile::tempdir().unwrap();
     ctxa()
@@ -399,7 +372,7 @@ fn action_request_requires_explicit_approval_provider_by_default() {
 }
 
 #[test]
-fn action_request_can_reject_approval_required_action() {
+fn action_request_does_not_accept_caller_controlled_approval() {
     let home = tempfile::tempdir().unwrap();
     ctxa()
         .env("CTXA_HOME", home.path())
@@ -411,32 +384,18 @@ fn action_request_can_reject_approval_required_action() {
             "--file",
             fixture("approval-required-action.json").to_str().unwrap(),
             "--approval",
-            "reject",
+            "approve",
         ])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("approval rejected"));
-
-    let log_output = ctxa()
-        .env("CTXA_HOME", home.path())
-        .arg("log")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let log_text = String::from_utf8(log_output).unwrap();
-    assert!(log_text.contains("approval_rejected"), "{log_text}");
-    assert!(log_text.contains("execution_skipped"), "{log_text}");
-    assert!(!log_text.contains("execution_attempted"), "{log_text}");
+        .failure();
 }
 
 #[test]
-fn action_request_can_reject_approval_required_action_from_env() {
+fn action_request_ignores_caller_controlled_approval_env() {
     let home = tempfile::tempdir().unwrap();
     ctxa()
         .env("CTXA_HOME", home.path())
-        .env("CTXA_APPROVAL_MODE", "reject")
+        .env("CTXA_APPROVAL_MODE", "approve")
         .args([
             "action",
             "request",
@@ -447,7 +406,41 @@ fn action_request_can_reject_approval_required_action_from_env() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("approval rejected"));
+        .stderr(predicate::str::contains("approval is required"));
+}
+
+#[test]
+fn runtime_can_use_internal_test_approval_provider() {
+    let home = tempfile::tempdir().unwrap();
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let policy_text = fs::read_to_string(fixture("approval-required-policy.yaml")).unwrap();
+    let policy: PolicyDocument = serde_yaml::from_str(&policy_text).unwrap();
+    let action_text = fs::read_to_string(fixture("approval-required-action.json")).unwrap();
+    let request: ActionRequest = serde_json::from_str(&action_text).unwrap();
+    let approvals = ApprovalProvider::auto_approve_for_tests();
+    let provider = FakeProvider::new(&request.resource);
+    let backend = FakeBackend::new(BTreeMap::from([(
+        "default".to_string(),
+        "fake-secret-value".to_string(),
+    )]));
+    let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
+    let runtime = BrokerRuntime {
+        policy: &policy,
+        audit: &audit,
+        approvals: &approvals,
+        provider: &provider,
+        secret_backend: Some(&backend),
+        signer: &signer,
+    };
+
+    let receipt = runtime.execute(&request).unwrap();
+    let approval = receipt.approval.expect("approval receipt");
+    assert!(approval.required);
+    assert_eq!(approval.approved_by.as_deref(), Some("local-test-approver"));
+
+    let events = audit.list(20).unwrap();
+    assert!(events.iter().any(|(_, kind, _)| kind == "approval_granted"));
+    assert!(events.iter().any(|(_, kind, _)| kind == "action_executed"));
 }
 
 #[test]
