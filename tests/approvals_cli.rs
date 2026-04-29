@@ -276,6 +276,42 @@ fn policy_check_denies_http_query_fields_in_payload() {
 }
 
 #[test]
+fn policy_check_rejects_duplicate_action_json_keys() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("duplicate-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_duplicate",
+  "agent_id": "demo",
+  "capability": "http.request",
+  "resource": "fake-github",
+  "operation": {
+    "method": "POST",
+    "method": "GET",
+    "host": "api.fake-github.local",
+    "path": "/repos/ctx-rs/authority-broker/issues/1"
+  },
+  "payload": {}
+}"#,
+    )
+    .unwrap();
+
+    ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("demo-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate JSON key"));
+}
+
+#[test]
 fn policy_check_denies_encoded_dot_segment_paths() {
     let temp = tempfile::tempdir().unwrap();
     let action_path = temp.path().join("encoded-dot-segment-action.json");

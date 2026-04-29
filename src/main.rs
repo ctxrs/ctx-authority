@@ -6,7 +6,9 @@ use authority_broker::config::{AgentConfig, AppConfig, AppPaths, PolicyConfig};
 use authority_broker::models::ActionRequest;
 use authority_broker::policy::PolicyDocument;
 use authority_broker::providers::FakeProvider;
-use authority_broker::receipts::{receipt_from_json_str_strict, ReceiptSigner};
+use authority_broker::receipts::{
+    json_value_from_str_no_duplicates, receipt_from_json_str_strict, ReceiptSigner,
+};
 use authority_broker::runtime::BrokerRuntime;
 use clap::{Parser, Subcommand};
 use std::collections::BTreeMap;
@@ -259,7 +261,8 @@ fn load_policy(path: PathBuf) -> anyhow::Result<PolicyDocument> {
 fn load_action(path: PathBuf) -> anyhow::Result<ActionRequest> {
     let text = fs::read_to_string(&path)
         .with_context(|| format!("failed to read action {}", path.display()))?;
-    Ok(serde_json::from_str(&text)?)
+    let value = json_value_from_str_no_duplicates(&text)?;
+    Ok(serde_json::from_value(value)?)
 }
 
 fn ensure_policy_exists(config: &AppConfig, policy_id: &str) -> anyhow::Result<()> {
