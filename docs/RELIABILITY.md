@@ -34,9 +34,10 @@ The default test suite should be offline.
 - Cargo build output must stay outside the repository through the Bazel wrapper
   environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
   commands.
-- Cargo package cache state should also be isolated through that environment so
-  long-running agent jobs in other repositories cannot block this repo on the
-  shared Cargo cache lock.
+- Cargo package cache state defaults to `/tmp/authority-broker-cargo-home` and
+  can be overridden with `AUTHORITY_BROKER_CARGO_HOME`. This avoids unrelated
+  agent jobs blocking this repo on the shared Cargo cache lock without relying
+  on external macOS volumes for package-cache locking.
 - `sccache` must be opt-in where the local wrapper is known to be flaky.
 - Wrapper scripts should use locked dependencies where Cargo supports it.
 - The CLI smoke test should capture stdout and stderr for each command and scan

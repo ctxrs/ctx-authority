@@ -115,6 +115,12 @@ impl Grant {
         }
 
         if self.capability == "http.request" {
+            if !self.allow.recipient_domains.is_empty() {
+                return Err(AuthorityError::Config(format!(
+                    "http.request grant {} must not specify recipient_domains",
+                    self.id
+                )));
+            }
             if self.allow.methods.is_empty()
                 || self.allow.hosts.is_empty()
                 || self.allow.path_prefixes.is_empty()
@@ -150,6 +156,15 @@ impl Grant {
             }
         }
         if self.capability == "email.send" {
+            if !self.allow.methods.is_empty()
+                || !self.allow.hosts.is_empty()
+                || !self.allow.path_prefixes.is_empty()
+            {
+                return Err(AuthorityError::Config(format!(
+                    "email.send grant {} must not specify methods, hosts, or path_prefixes",
+                    self.id
+                )));
+            }
             if self.allow.recipient_domains.is_empty() {
                 return Err(AuthorityError::Config(format!(
                     "email.send grant {} must specify recipient_domains",
@@ -483,6 +498,28 @@ grants:
     }
 
     #[test]
+    fn rejects_http_grants_with_email_allow_dimensions() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "mixed".into(),
+                agent: "demo".into(),
+                capability: "http.request".into(),
+                resource: "github".into(),
+                allow: AllowRule {
+                    methods: vec!["GET".into()],
+                    hosts: vec!["api.github.com".into()],
+                    path_prefixes: vec!["/safe".into()],
+                    recipient_domains: vec!["example.com".into()],
+                },
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("must not specify recipient_domains"));
+    }
+
+    #[test]
     fn rejects_unsupported_grant_capabilities() {
         let policy = PolicyDocument {
             version: 1,
@@ -614,6 +651,28 @@ grants:
         };
         let err = policy.validate().unwrap_err().to_string();
         assert!(err.contains("recipient_domains"));
+    }
+
+    #[test]
+    fn rejects_email_grants_with_http_allow_dimensions() {
+        let policy = PolicyDocument {
+            version: 1,
+            grants: vec![Grant {
+                id: "mixed".into(),
+                agent: "demo".into(),
+                capability: "email.send".into(),
+                resource: "mail".into(),
+                allow: AllowRule {
+                    methods: vec!["GET".into()],
+                    hosts: vec!["api.example.com".into()],
+                    path_prefixes: vec!["/safe".into()],
+                    recipient_domains: vec!["example.com".into()],
+                },
+                require_approval: false,
+            }],
+        };
+        let err = policy.validate().unwrap_err().to_string();
+        assert!(err.contains("must not specify methods, hosts, or path_prefixes"));
     }
 
     #[test]

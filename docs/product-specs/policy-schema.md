@@ -77,6 +77,8 @@ For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
 `path_prefixes` are all present and non-empty. Explicit wildcards can be added
 later, but omitted HTTP dimensions must not act as implicit wildcards. The
 `http.request` operation object may contain only `method`, `host`, and `path`.
+HTTP grants must not specify email-only allow dimensions such as
+`recipient_domains`.
 
 For v1, `email.send` grants are invalid unless `recipient_domains` is present
 and non-empty. Recipient matching is exact and case-insensitive on the domain
@@ -85,6 +87,8 @@ objects may contain only `to` and `subject`. `http.request` and `email.send`
 payload objects may be omitted/null or contain only `body`. Display-name
 syntax, cc/bcc fields, subdomain wildcards, query-string fields, and
 multi-recipient payloads are future schema work and must deny in v1.
+Email grants must not specify HTTP-only allow dimensions such as `methods`,
+`hosts`, or `path_prefixes`.
 
 HTTP path constraints must be safe to compare without relying on provider
 normalization:

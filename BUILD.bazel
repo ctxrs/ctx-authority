@@ -18,6 +18,7 @@ REPO_SCAN_DATA = [
     "Cargo.toml",
     "LICENSE",
     "MODULE.bazel",
+    "MODULE.bazel.lock",
     "README.md",
     "SECURITY.md",
 ] + glob([

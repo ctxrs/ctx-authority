@@ -54,12 +54,26 @@ authority_broker_cache_root() {
   printf '%s\n' "$cache_root"
 }
 
+authority_broker_cargo_home() {
+  if [[ -n "${AUTHORITY_BROKER_CARGO_HOME:-}" ]]; then
+    printf '%s\n' "$AUTHORITY_BROKER_CARGO_HOME"
+    return 0
+  fi
+
+  local package_cache_root="/tmp/authority-broker-cargo-home"
+  mkdir -p "$package_cache_root"
+  (cd "$package_cache_root" && pwd)
+}
+
 cache_root="$(authority_broker_cache_root)"
-export CARGO_HOME="${CARGO_HOME:-$cache_root/cargo-home}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache_root/target}"
 export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+if [[ -z "${CARGO_HOME+x}" ]]; then
+  export CARGO_HOME="$(authority_broker_cargo_home)"
+fi
 
 if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
   use_sccache="${AUTHORITY_BROKER_USE_SCCACHE:-}"
