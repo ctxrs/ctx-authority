@@ -33,7 +33,7 @@ brew install ctxrs/tap/ctxa
 With Cargo:
 
 ```sh
-cargo install ctxa --locked
+cargo install --git https://github.com/ctxrs/ctx-authority --locked
 ```
 
 From a local checkout:

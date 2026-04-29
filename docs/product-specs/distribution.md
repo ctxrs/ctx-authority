@@ -22,7 +22,7 @@ brew install ctxrs/tap/ctxa
 Rust fallback:
 
 ```sh
-cargo install ctxa --locked
+cargo install --git https://github.com/ctxrs/ctx-authority --locked
 ```
 
 Local development:
