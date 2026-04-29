@@ -23,7 +23,7 @@ Approval:
 
 ## Local approval
 
-The first implementation can use a CLI prompt:
+A local approval UI can use a CLI prompt:
 
 ```text
 Agent demo wants to perform email.send through fake-mailgun.
@@ -70,7 +70,8 @@ If any bound field changes, execution must fail.
 
 ## Expiration
 
-Approvals should expire quickly by default. Candidate local default: 10 minutes.
+Approvals should expire quickly by default. The local default target is 10
+minutes.
 
 Grants should have explicit scope. Expiring durable grants are planned, but the
 v1 schema does not yet accept `expires_at`; until that lands, a grant must be

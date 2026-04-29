@@ -1,9 +1,9 @@
 # Architecture
 
-`authority-broker` is a local capability broker for agents.
+`authority-broker` is the local capability broker for `ctx authority`.
 
-It is designed to be useful by itself in offline/local mode and to become the
-open-source edge/client for `ctx authority` cloud later.
+It is useful by itself in offline/local mode and is designed to work as the
+open-source edge component for hosted `ctx authority` deployments.
 
 ## Boundaries
 
@@ -21,7 +21,7 @@ In scope:
 - provider/action adapter interface
 - fake providers and deterministic tests
 
-Out of scope for this repo's first release:
+Current non-goals:
 
 - hosted cloud control plane
 - mobile approvals
@@ -49,14 +49,14 @@ Agent runtime
 
 The repo includes a runtime-agnostic skill/instruction pack. It teaches agents
 how to use `ctxa` and the MCP server safely, without embedding assumptions about
-Codex, Claude, OpenClaw, or any private runtime.
+specific agent runtimes.
 
 The skill is documentation plus examples, not a privileged execution surface.
 
 ## Core primitives
 
 - `AgentProfile`: named local agent identity and policy attachment.
-- `Principal`: local human or future organization principal.
+- `Principal`: local human or organization principal.
 - `Capability`: named action surface such as `http.request` or `email.send`.
 - `ResourceHandle`: logical resource such as `github-main` or `mailgun-demo`.
 - `Policy`: rules that allow, deny, or require approval.
@@ -79,7 +79,7 @@ The skill is documentation plus examples, not a privileged execution surface.
 4. Deny immediately if denied.
 5. Ask for approval if required.
 6. Refuse execution if approval is rejected, expired, or payload-mismatched.
-7. Resolve provider adapter and retrieve required secret internally.
+7. Resolve provider adapter and retrieve required secret inside the broker.
 8. Execute provider action.
 9. Redact provider result.
 10. Write audit event.
@@ -95,8 +95,8 @@ embedded in receipts, or printed in errors.
 
 ## Receipts
 
-Receipts are the bridge from local utility to future verification. The local
-receipt should be verifiable offline and should include:
+Receipts are the bridge between local execution and later verification. The
+local receipt is verifiable offline and includes:
 
 - receipt version
 - receipt id

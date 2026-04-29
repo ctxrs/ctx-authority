@@ -2,10 +2,7 @@
 
 Local capability control for AI agents.
 
-`ctx authority` lets agents use real tools without handing them raw secrets. An
-agent asks for an action, `ctxa` checks policy, requests approval when needed,
-executes through a provider adapter, writes an audit log, and returns a signed
-receipt.
+`ctx authority` lets agents use real tools without handing them raw secrets. An agent asks for an action, `ctxa` checks policy, requests approval when needed, executes through a provider adapter, writes an audit log, and returns a signed receipt.
 
 This project is part of [ctx](https://ctx.rs).
 
@@ -15,9 +12,7 @@ agent -> ctxa -> policy -> approval -> provider -> receipt
 
 ## Why
 
-Agents are becoming useful enough to send email, call APIs, manage tickets, and
-operate services. Those actions need credentials and durable authority. Giving an
-agent a long-lived token or a password manager session is too broad.
+Agents are becoming useful enough to send email, call APIs, manage tickets, and operate services. Those actions need credentials and durable authority. Giving an agent a long-lived token or a password manager session is too broad.
 
 `ctx authority` gives the agent capabilities instead of secrets:
 
@@ -90,9 +85,7 @@ A named actor with an attached trusted policy.
 
 **Policy**
 
-A local YAML document that grants scoped capabilities. Execution uses the policy
-hash pinned by `ctxa policy trust`; agents cannot provide a policy path at action
-time.
+A local YAML document that grants scoped capabilities. Execution uses the policy hash pinned by `ctxa policy trust`; agents cannot provide a policy path at action time.
 
 **Capability**
 
@@ -100,33 +93,37 @@ A type of action, such as `http.request` or `email.send`.
 
 **Secret Backend**
 
-A configured source for credentials. The broker resolves secrets internally and
-passes them to provider adapters without exposing raw values to the agent.
+A configured source for credentials. The broker resolves secrets inside the execution path and passes them to provider adapters without exposing raw values to the agent.
 
 **Receipt**
 
-A signed record of the action, policy hash, payload hash, approval state, and
-provider result.
+A signed record of the action, policy hash, payload hash, approval state, and provider result.
 
-## Secret Backends
+## Current Capabilities
 
-The backend interface is pluggable. Current adapters include:
-
-- fake backend for tests
-- `.env` files
-- OS keychains through the platform credential store
-- 1Password through `op read`
-
-Execution uses the configured backend exactly. If the backend cannot be loaded,
-the action fails closed.
+- `ctxa` CLI for local initialization, policy checks, action requests, audit logs, and receipt verification
+- local YAML policies with hash-pinned trust
+- fail-closed approval behavior for approval-required actions
+- SQLite audit log
+- canonical JSON action hashes
+- Ed25519-signed receipts
+- structural MCP receipt verification
+- pluggable secret backend interface
+- `.env`, OS keychain, 1Password CLI, and test backends
+- deterministic fake providers for closed-system tests
 
 ## MCP
 
-`ctxa mcp serve` starts a stdio MCP server. The current server exposes broker
-metadata and structural receipt verification.
+`ctxa mcp serve` starts a stdio MCP server. The current server exposes broker metadata and structural receipt verification.
 
 ```sh
 ctxa mcp serve
+```
+
+For cryptographic receipt verification, use:
+
+```sh
+ctxa receipts verify receipt.json
 ```
 
 ## Development
@@ -143,23 +140,20 @@ Run the full repository gate:
 bazel test //:full_suite
 ```
 
-The Bazel wrappers keep Cargo build output outside the repository and use the
-shared ctx cache when available.
+The Bazel wrappers keep Cargo build output outside the repository and use the shared ctx cache when available.
 
 ## Repository
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system layout and boundaries
-- [docs/product-specs](docs/product-specs): behavior specs and acceptance
-  criteria
+- [docs/product-specs](docs/product-specs): behavior specs and acceptance criteria
 - [docs/SECURITY.md](docs/SECURITY.md): security model
-- [skills/authority-broker](skills/authority-broker): agent instructions for
-  using `ctxa`
+- [skills/authority-broker](skills/authority-broker): agent instructions for using `ctxa`
 
-## Roadmap
+## Planned Work
 
-- Human approval UI
-- Real provider adapters
-- Hosted ctx authority service
-- More secret backends
-- Richer MCP action surfaces
-- Admin and team policy workflows
+- human approval UI
+- real provider adapters
+- hosted ctx authority service
+- additional secret backends
+- richer MCP action surfaces
+- admin and team policy workflows

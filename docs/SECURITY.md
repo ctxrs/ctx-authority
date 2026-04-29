@@ -19,11 +19,12 @@ Constrain how agents use capabilities without handing them durable credentials.
 - Proving an arbitrary local agent is honest about intent.
 - Preventing malware on the same machine from reading local files.
 - Protecting secrets after they are intentionally sent to a provider.
-- Solving payment, phone, email, or compliance risk before those adapters exist.
+- Solving payment, phone, email, or compliance risk outside the currently
+  implemented adapters.
 
-## Required launch claims
+## Supported security claim
 
-Only claim what tests prove. For v1, the desired claim is:
+Only claim what tests prove:
 
 > The broker does not expose configured raw secrets to the agent through its
 > documented CLI, MCP, audit, receipt, or provider-result surfaces.

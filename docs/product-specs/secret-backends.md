@@ -1,6 +1,6 @@
 # Secret backends
 
-Secret backends should be pluggable from day one.
+Secret backends are pluggable so users can keep credentials in existing stores.
 
 ## Why pluggable
 
@@ -8,9 +8,9 @@ Users already keep secrets in different places. The broker should not become
 the secret store of record. It should broker capability use across existing
 stores.
 
-## Initial backends
+## Implemented backends
 
-Required:
+Implemented:
 
 - fake backend for tests
 - `.env` backend for simple local use
@@ -20,7 +20,7 @@ Required:
   - Linux Secret Service/libsecret
 - 1Password through `op read`
 
-Later:
+Adapter candidates:
 
 - Doppler
 - Infisical
@@ -32,13 +32,12 @@ Later:
 
 ## Backend contract
 
-Backends should support:
+Backends support:
 
-- validate configuration
+- validate configuration through backend construction and resolution
 - resolve logical secret reference
-- return secret only to broker internals
-- redact values from errors/logs
-- optionally report metadata such as backend type and secret id
+- return secrets only to the broker execution path
+- redact values from errors and debug output
 
 The implementation exposes a `SecretBackend` trait and a serializable
 `SecretBackendConfig` factory for selecting fake, `.env`, 1Password, and OS
@@ -96,10 +95,7 @@ keychain adapter. Production code uses the system store; tests use deterministic
 fake stores so the test suite never prompts for real keychain access and never
 requires real credentials.
 
-The configured service name scopes broker-owned entries. v1 resolves the trusted
-`default` reference for fake provider execution; action-supplied `secret_ref`
-values are not policy-controlled and must not be honored. Resource-owned secret
-reference mapping is planned.
+The configured service name scopes broker-owned entries. The current execution path resolves the trusted `default` reference for provider execution; action-supplied secret references are not honored. Resource-owned secret reference mapping is planned.
 
 Reference: https://docs.rs/keyring/latest/keyring/
 
@@ -108,7 +104,7 @@ Reference: https://docs.rs/keyring/latest/keyring/
 Agents may see logical capability/resource names. They should not receive raw
 secret values.
 
-Open question: how much secret metadata should policy and audit expose?
+Policy and audit output should expose only logical resource names and redacted backend metadata.
 
 ## Notes
 

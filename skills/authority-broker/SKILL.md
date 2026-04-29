@@ -29,9 +29,9 @@ When connected through MCP, use `capabilities.list` to inspect the currently
 available local tools.
 
 Use `receipts.verify` to check receipt shape through MCP. Pass either a receipt
-object as `receipt` or a JSON string as `receipt_json`. This MCP tool currently
-checks that the receipt parses and has a supported non-empty ed25519 signature
-envelope; it does not yet perform key-based signature verification.
+object as `receipt` or a JSON string as `receipt_json`. For cryptographic
+receipt verification, use `ctxa receipts verify`; MCP receipt verification
+checks structure only.
 
 ## Decision handling
 

@@ -8,16 +8,19 @@ backends.
 Every real adapter must have a fake adapter with the same behavior contract.
 Default tests use fakes.
 
-## Initial adapters
+## Current adapters
 
 - fake HTTP
 - fake GitHub
 - fake Mailgun
-- generic HTTP later or earlier depending on stack choice
+
+Planned:
+
+- generic HTTP adapter
 
 ## Adapter contract
 
-Candidate lifecycle:
+Adapter lifecycle:
 
 ```text
 validate_config

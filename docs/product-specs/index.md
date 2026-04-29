@@ -1,8 +1,8 @@
 # Product specs
 
-Read these specs before implementation:
+Read these specs before changing broker behavior:
 
-- [local-broker-mvp.md](local-broker-mvp.md)
+- [local-broker.md](local-broker.md)
 - [policy-schema.md](policy-schema.md)
 - [receipt-schema.md](receipt-schema.md)
 - [mcp-server.md](mcp-server.md)
@@ -10,4 +10,4 @@ Read these specs before implementation:
 - [provider-adapters.md](provider-adapters.md)
 - [approval-flow.md](approval-flow.md)
 - [agent-skill.md](agent-skill.md)
-- [open-questions.md](open-questions.md)
+- [design-decisions.md](design-decisions.md)

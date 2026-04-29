@@ -1,28 +1,25 @@
-# Security
+# Security Policy
 
-This project is security-sensitive because it mediates agent access to
-credentials and capabilities.
+`ctx authority` is security-sensitive because it mediates agent access to credentials and capabilities.
 
-## Current status
+## Supported Versions
 
-Pre-implementation planning scaffold. Do not use this repository as a security
-boundary until implementation and security review exist.
+This repository currently publishes source from the `main` branch. Until tagged releases exist, please test against `main` before reporting an issue.
 
-## Security goals
+## Reporting a Vulnerability
 
-- Agents can request actions without receiving raw durable credentials.
-- Policy decisions are explicit and auditable.
-- Risky actions can require approval.
-- Approvals are bound to exact payload hashes.
-- Receipts are tamper-detectable.
-- Logs, errors, audit events, and receipts redact secrets.
+Please do not open a public issue for a suspected vulnerability.
 
-## Non-goals
+Send a private report to the maintainers through the repository security advisory flow once the GitHub repository is published. If that is not available, contact the project maintainers directly.
 
-The local broker cannot prove that an arbitrary local agent is honest about its
-intent. It can constrain what credentials and provider actions the agent can use
-through this broker.
+Include:
 
-## Reporting vulnerabilities
+- affected commit or version
+- steps to reproduce
+- expected behavior
+- observed behavior
+- whether raw secrets, approvals, receipts, or policy enforcement are involved
 
-Security contact details will be added before public release.
+## Scope
+
+Security-sensitive areas include policy evaluation, secret backend resolution, approval binding, audit logging, receipt signing, MCP parsing, and provider execution.

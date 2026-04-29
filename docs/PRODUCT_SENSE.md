@@ -4,8 +4,7 @@ The user should understand the product in under one minute:
 
 > Give agents capabilities, not secrets.
 
-The first user is a technical agent power user running local agents such as
-OpenClaw, Codex, Claude Code, Cursor, or shell-based agents.
+The first user is a technical user running local agent tools.
 
 The first job to be done:
 
@@ -18,7 +17,8 @@ The second job:
 
 The third job:
 
-> I want receipts I can inspect, verify, and later sync or share.
+> I want receipts I can inspect and verify, with a format that can be synced or
+> shared later.
 
 Avoid broad claims in the product UI. The first release should not promise to
 solve enterprise IAM, payments, phone, email, or compliance. It should solve

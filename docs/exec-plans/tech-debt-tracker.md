@@ -1,4 +1,4 @@
 # Tech debt tracker
 
-No implementation debt yet. Add concrete, dated items as soon as shortcuts are
-taken.
+No tracked implementation debt in this file yet. Add concrete, dated items when
+shortcuts are intentionally taken.

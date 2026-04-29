@@ -8,6 +8,5 @@
 6. Approval must bind to an exact canonical action hash.
 7. Policy ambiguity should fail closed.
 8. The repository should be legible to coding agents.
-9. Public code is not the moat; trust, distribution, hosted operations, and
-   receipt adoption are the moat.
+9. Public code should make the trust model inspectable.
 10. The product should start narrow and earn the right to become broader.

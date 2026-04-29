@@ -24,10 +24,10 @@ Implemented tools:
 different protocol version fail with a JSON-RPC invalid-params error instead of
 silently negotiating unsupported behavior.
 
-`receipts.verify` currently performs structural verification only: it checks
-that the receipt parses into the local receipt schema and includes a supported
-non-empty `ed25519` signature envelope. Key-based signature verification is
-still tracked by the receipt-verification work.
+`receipts.verify` performs structural verification only: it checks that the
+receipt parses into the local receipt schema and includes a supported non-empty
+`ed25519` signature envelope. Use `ctxa receipts verify` for cryptographic local
+receipt verification.
 
 ## Initial tools
 
@@ -48,7 +48,7 @@ actions, not secret values.
 Request:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"example-client","version":"0.1.0"}}}
 ```
 
 Response:
@@ -69,17 +69,12 @@ Tool call request:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"capabilities.list","arguments":{}}}
 ```
 
-## Smoke test
+## MCP acceptance behavior
 
-A generic MCP client should be able to:
+The current MCP surface supports:
 
 1. list capabilities
 2. verify receipt structure
-3. request an allowed fake HTTP action
-4. request a risky fake email action
-5. observe approval-required state
-6. complete action after local approval
-7. verify receipt cryptographically
 
-Items 1 and 2 are covered by the current minimal MCP surface. Items 3-7 require
-the planned action, approval, and key-based receipt verification tools.
+Action execution, approval state, and cryptographic receipt verification over
+MCP are planned work.

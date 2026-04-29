@@ -1,7 +1,7 @@
 # Contributing
 
-This repository is pre-implementation. Contributions should start with specs,
-fixtures, tests, or narrowly scoped implementation that follows the public
+Contributions should keep the broker small, explicit, and testable. Start with
+the relevant spec, add focused tests, and keep behavior aligned with the public
 architecture.
 
 ## Before coding
@@ -17,7 +17,7 @@ Read:
 
 - Keep changes small and testable.
 - Prefer fake providers over real external services.
-- Do not add credentials or private examples.
+- Do not add credentials or non-public examples.
 - Update specs when behavior changes.
 - Add tests for security-sensitive behavior.
 

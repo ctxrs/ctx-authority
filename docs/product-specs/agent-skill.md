@@ -1,15 +1,15 @@
 # Agent skill
 
-The repository should ship a runtime-agnostic skill/instruction pack for agents.
+The repository ships a runtime-agnostic skill/instruction pack for agents.
 
 ## Goal
 
 Any agent should be able to learn how to use `ctxa` safely without receiving
-raw secrets or private implementation context.
+raw secrets or unrelated implementation details.
 
 ## Contents
 
-The skill should teach:
+The skill teaches:
 
 - what `ctxa` is
 - when to request a capability
@@ -21,15 +21,15 @@ The skill should teach:
 
 ## Current MCP guidance
 
-The skill should describe `ctxa mcp serve` as a stdio MCP server with a minimal
-tool surface:
+The skill describes `ctxa mcp serve` as a stdio MCP server with a minimal tool
+surface:
 
 - `capabilities.list` lists currently exposed MCP tools and planned broker
   capabilities.
 - `receipts.verify` accepts either `receipt` as an object or `receipt_json` as a
   string and performs structural receipt verification.
 
-The skill should not claim MCP support for action execution or approval polling
+The skill must not claim MCP support for action execution or approval polling
 until `actions.request`, `http.request`, and `approvals.status` are implemented.
 
 ## Runtime-specific docs

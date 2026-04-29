@@ -1,7 +1,7 @@
 # OS keychain reference notes
 
-The OS keychain backend should use the platform keychain through the Rust
-`keyring` crate instead of shelling out to platform commands.
+The OS keychain backend uses the platform keychain through the Rust `keyring`
+crate instead of shelling out to platform commands.
 
 Target stores:
 
@@ -21,8 +21,8 @@ Implementation requirements:
 Testing requirements:
 
 - unit tests must not read or write the real OS keychain
-- tests should use the backend store abstraction with fixture values
-- fake store misses should use generic errors that do not contain secret values
+- tests use the backend store abstraction with fixture values
+- fake store misses use generic errors that do not contain secret values
 
 Public references:
 

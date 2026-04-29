@@ -7,8 +7,8 @@ The local broker should fail closed.
 - If policy cannot be parsed, deny.
 - If policy cannot be evaluated, deny.
 - If approval state is ambiguous, deny.
-- If receipt signing fails, mark execution as failed unless a future explicit
-  unsafe mode exists.
+- If receipt signing fails, report the failure and do not emit a success
+  receipt.
 - If provider execution status is unknown, record an unknown state and require
   reconciliation before retry when idempotency matters.
 - If a secret backend fails, do not fall back to weaker sources unless policy
@@ -37,9 +37,8 @@ The default test suite should be offline.
   environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
   commands.
 - Cargo package cache state defaults to `/tmp/authority-broker-cargo-home` and
-  can be overridden with `AUTHORITY_BROKER_CARGO_HOME`. This avoids unrelated
-  agent jobs blocking this repo on the shared Cargo cache lock without relying
-  on external macOS volumes for package-cache locking.
+  can be overridden with `AUTHORITY_BROKER_CARGO_HOME`. This keeps package-cache
+  locks isolated from unrelated local work.
 - `sccache` must be opt-in where the local wrapper is known to be flaky.
 - Wrapper scripts should use locked dependencies where Cargo supports it.
 - The CLI smoke test should capture stdout and stderr for each command and scan

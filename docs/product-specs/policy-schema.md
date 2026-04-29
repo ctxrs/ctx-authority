@@ -1,6 +1,6 @@
 # Policy schema
 
-Initial policy format should be human-editable YAML.
+Policy files are human-editable YAML.
 
 Example:
 
@@ -60,8 +60,8 @@ capability names in action requests must deny and must not reach a provider.
 
 ## Grants
 
-Policies should support durable scoped grants so humans do not have to approve
-every routine action.
+Policies support durable scoped grants so humans do not have to approve every
+routine action.
 
 A grant is safe only when it is specific:
 
@@ -72,7 +72,7 @@ A grant is safe only when it is specific:
 - optional expiry
 - optional rate limit
 
-Broad grants should be avoided in examples.
+Broad grants are avoided in examples.
 For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
 `path_prefixes` are all present and non-empty. Explicit wildcards can be added
 later, but omitted HTTP dimensions must not act as implicit wildcards. The
@@ -86,7 +86,7 @@ portion of a single bare `operation.to` email address. `email.send` operation
 objects may contain only `to` and `subject`. `http.request` and `email.send`
 payload objects may be omitted/null or contain only `body`. Display-name
 syntax, cc/bcc fields, subdomain wildcards, query-string fields, and
-multi-recipient payloads are future schema work and must deny in v1.
+multi-recipient payloads are planned schema work and must deny in v1.
 Email grants must not specify HTTP-only allow dimensions such as `methods`,
 `hosts`, or `path_prefixes`.
 

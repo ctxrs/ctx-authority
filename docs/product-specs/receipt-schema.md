@@ -8,9 +8,9 @@ Receipts are signed records of executed actions.
 - make tampering detectable
 - avoid raw secret exposure
 - work offline
-- support future hosted publication
+- support later hosted publication and verification flows
 
-## Candidate v1 shape
+## Receipt shape
 
 ```json
 {
@@ -49,27 +49,18 @@ Receipts are signed records of executed actions.
 - provider API keys
 - unredacted provider response bodies unless explicitly safe
 
-## Open decision
+## Signing envelope
 
-Choose signing envelope:
+Receipts use custom canonical JSON plus Ed25519.
 
-- JWS
-- COSE
-- custom canonical JSON + Ed25519
-
-Current recommendation: canonical JSON plus Ed25519 for v1.
-
-Why:
+The format is intentionally simple:
 
 - simple to implement and inspect in Rust
 - easy to verify offline
 - no dependency on JWT semantics that may imply auth tokens rather than records
-- no COSE/CBOR complexity for the first release
 - maps cleanly to JSONL local audit/export
 
-The design should keep an envelope version so the hosted product can later move
-to JWS, COSE, or W3C-verifiable-credential-compatible formats without breaking
-v1 receipts.
+The `receipt_version` field allows later JWS, COSE, or verifiable-credential-compatible formats without breaking existing receipts.
 
 ## Action hash
 

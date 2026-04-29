@@ -1,3 +1,3 @@
 # Completed plans
 
-Completed execution plans should be moved here with a short outcome summary.
+Completed execution plans live here with short outcome summaries.

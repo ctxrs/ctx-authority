@@ -3,16 +3,16 @@
 Infisical is a likely secret backend and an adjacent product in agent
 credential brokering.
 
-Implementation should treat Infisical as a secret backend, not as a competitor
-to clone. The broker's product value is policy, approval, action execution, and
-receipts across many backends and providers.
+Treat Infisical as a secret backend integration. The broker's product value is
+policy, approval, action execution, and receipts across many backends and
+providers.
 
 Potential integration shapes:
 
 - CLI-backed local development backend for users who already authenticate the
   Infisical CLI
 - API-backed backend for server-side broker deployments
-- secret sync or injected environment workflows when the broker should not fetch
+- secret sync or injected environment workflows when the broker does not fetch
   directly at action time
 
 Implementation requirements:
