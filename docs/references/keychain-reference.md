@@ -15,7 +15,8 @@ Implementation requirements:
 - clear permission prompts when the OS requires them
 - deterministic fake keychain store in tests instead of real keychain access
 - stable service name for broker-owned entries
-- operation `secret_ref` maps to the keychain account within that service
+- v1 resolves only broker-owned trusted references; action-supplied
+  `secret_ref` values are not honored
 
 Testing requirements:
 

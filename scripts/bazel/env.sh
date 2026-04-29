@@ -55,6 +55,7 @@ authority_broker_cache_root() {
 }
 
 cache_root="$(authority_broker_cache_root)"
+export CARGO_HOME="${CARGO_HOME:-$cache_root/cargo-home}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache_root/target}"
 export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
@@ -78,4 +79,4 @@ if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
   fi
 fi
 
-mkdir -p "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
+mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$SCCACHE_DIR"

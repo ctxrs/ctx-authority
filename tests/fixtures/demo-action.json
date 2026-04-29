@@ -8,8 +8,6 @@
     "host": "api.fake-github.local",
     "path": "/repos/ctx-rs/authority-broker/issues/1"
   },
-  "payload": {
-    "query": "state:open"
-  },
+  "payload": {},
   "idempotency_key": "idem_demo"
 }

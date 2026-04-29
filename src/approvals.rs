@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy)]
 pub enum ApprovalMode {
     AutoApproveForTests,
+    ExpiredApprovalForTests,
     MismatchedPayloadForTests,
     RequireExplicit,
     Reject,
@@ -41,6 +42,12 @@ impl ApprovalProvider {
         }
     }
 
+    pub fn expired_for_tests() -> Self {
+        Self {
+            mode: ApprovalMode::ExpiredApprovalForTests,
+        }
+    }
+
     pub fn request(
         &self,
         action: &ActionRequest,
@@ -48,14 +55,17 @@ impl ApprovalProvider {
         policy_hash: String,
     ) -> Result<Option<ApprovalRecord>> {
         match self.mode {
-            ApprovalMode::AutoApproveForTests | ApprovalMode::MismatchedPayloadForTests => {
+            ApprovalMode::AutoApproveForTests
+            | ApprovalMode::ExpiredApprovalForTests
+            | ApprovalMode::MismatchedPayloadForTests => {
                 let now = Utc::now();
                 Ok(Some(ApprovalRecord {
                     approval_id: format!("appr_{}", Uuid::new_v4()),
                     action_request_id: action.id.clone(),
                     payload_hash: match self.mode {
                         ApprovalMode::MismatchedPayloadForTests => "sha256:changed-payload".into(),
-                        ApprovalMode::AutoApproveForTests => payload_hash,
+                        ApprovalMode::AutoApproveForTests
+                        | ApprovalMode::ExpiredApprovalForTests => payload_hash,
                         ApprovalMode::RequireExplicit | ApprovalMode::Reject => {
                             unreachable!("non-approval modes handled separately")
                         }
@@ -63,7 +73,14 @@ impl ApprovalProvider {
                     policy_hash,
                     approved_by: "local-test-approver".into(),
                     approved_at: now,
-                    expires_at: now + Duration::minutes(10),
+                    expires_at: match self.mode {
+                        ApprovalMode::ExpiredApprovalForTests => now - Duration::minutes(1),
+                        ApprovalMode::AutoApproveForTests
+                        | ApprovalMode::MismatchedPayloadForTests => now + Duration::minutes(10),
+                        ApprovalMode::RequireExplicit | ApprovalMode::Reject => {
+                            unreachable!("non-approval modes handled separately")
+                        }
+                    },
                 }))
             }
             ApprovalMode::RequireExplicit => Err(AuthorityError::ApprovalRequired(

@@ -694,6 +694,48 @@ fn policy_check_denies_email_cc_and_bcc_fields() {
 }
 
 #[test]
+fn policy_check_denies_email_recipient_fields_in_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let action_path = temp.path().join("payload-cc-email-action.json");
+    fs::write(
+        &action_path,
+        r#"{
+  "id": "act_payload_cc_email",
+  "agent_id": "demo",
+  "capability": "email.send",
+  "resource": "fake-mailgun",
+  "operation": {
+    "to": "external@example.com",
+    "subject": "Demo approval"
+  },
+  "payload": {
+    "body": "Approval-bound test payload",
+    "cc": "attacker@evil.test"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let output = ctxa()
+        .args([
+            "policy",
+            "check",
+            "--policy",
+            fixture("approval-required-policy.yaml").to_str().unwrap(),
+            "--file",
+            action_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let decision: PolicyDecision = serde_json::from_slice(&output).unwrap();
+    assert_eq!(decision.decision, PolicyDecisionKind::Deny);
+}
+
+#[test]
 fn policy_check_rejects_incomplete_http_grants() {
     let temp = tempfile::tempdir().unwrap();
     let policy_path = temp.path().join("broad-policy.yaml");
@@ -962,6 +1004,46 @@ fn runtime_rejects_approval_bound_to_changed_payload() {
 
     let err = runtime.execute(&request).unwrap_err().to_string();
     assert!(err.contains("approval does not match payload or policy"));
+}
+
+#[test]
+fn runtime_rejects_expired_approvals_before_execution() {
+    let home = tempfile::tempdir().unwrap();
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let policy_text = fs::read_to_string(fixture("approval-required-policy.yaml")).unwrap();
+    let policy: PolicyDocument = serde_yaml::from_str(&policy_text).unwrap();
+    let action_text = fs::read_to_string(fixture("approval-required-action.json")).unwrap();
+    let request: ActionRequest = serde_json::from_str(&action_text).unwrap();
+    let approvals = ApprovalProvider::expired_for_tests();
+    let provider = FakeProvider::new(&request.resource);
+    let backend = FakeBackend::new(BTreeMap::from([(
+        "default".to_string(),
+        "fake-secret-value".to_string(),
+    )]));
+    let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
+    let runtime = BrokerRuntime {
+        policy: &policy,
+        audit: &audit,
+        approvals: &approvals,
+        provider: &provider,
+        secret_backend: Some(&backend),
+        signer: &signer,
+    };
+
+    let err = runtime.execute(&request).unwrap_err().to_string();
+    assert!(err.contains("approval expired"));
+
+    let events = audit.list(20).unwrap();
+    assert!(events.iter().any(|(_, kind, _)| kind == "approval_expired"));
+    assert!(
+        events
+            .iter()
+            .any(|(_, kind, data)| kind == "execution_skipped"
+                && data["reason"] == "approval expired")
+    );
+    assert!(!events
+        .iter()
+        .any(|(_, kind, _)| kind == "execution_attempted"));
 }
 
 #[test]

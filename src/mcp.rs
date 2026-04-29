@@ -50,7 +50,7 @@ fn handle_message(message: Value) -> Option<Value> {
     };
 
     match method {
-        "initialize" => Some(success_response(id, initialize_result(&message))),
+        "initialize" => Some(handle_initialize(id, &message)),
         "ping" => Some(success_response(id, json!({}))),
         "tools/list" => Some(success_response(id, json!({ "tools": tools() }))),
         "tools/call" => Some(handle_tool_call(id, message.get("params").cloned())),
@@ -58,27 +58,34 @@ fn handle_message(message: Value) -> Option<Value> {
     }
 }
 
-fn initialize_result(message: &Value) -> Value {
-    let requested_protocol_version = message
+fn handle_initialize(id: Value, message: &Value) -> Value {
+    if let Some(requested_protocol_version) = message
         .get("params")
         .and_then(|params| params.get("protocolVersion"))
         .and_then(Value::as_str)
-        .unwrap_or(MCP_PROTOCOL_VERSION);
+    {
+        if requested_protocol_version != MCP_PROTOCOL_VERSION {
+            return error_response(id, -32602, "unsupported MCP protocol version");
+        }
+    }
 
-    json!({
-        "protocolVersion": requested_protocol_version,
-        "capabilities": {
-            "tools": {
-                "listChanged": false
-            }
-        },
-        "serverInfo": {
-            "name": "authority-broker",
-            "title": "Authority Broker",
-            "version": env!("CARGO_PKG_VERSION")
-        },
-        "instructions": "Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."
-    })
+    success_response(
+        id,
+        json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {
+                "tools": {
+                    "listChanged": false
+                }
+            },
+            "serverInfo": {
+                "name": "authority-broker",
+                "title": "Authority Broker",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "instructions": "Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."
+        }),
+    )
 }
 
 fn tools() -> Vec<Value> {
@@ -305,6 +312,30 @@ mod tests {
         assert_eq!(
             response["result"]["capabilities"]["tools"]["listChanged"],
             false
+        );
+    }
+
+    #[test]
+    fn initialize_rejects_unsupported_protocol_versions() {
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2099-01-01",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "smoke",
+                    "version": "0.0.0"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["message"],
+            "unsupported MCP protocol version"
         );
     }
 

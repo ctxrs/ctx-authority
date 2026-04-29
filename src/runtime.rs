@@ -6,6 +6,7 @@ use crate::policy::PolicyDocument;
 use crate::providers::ProviderAdapter;
 use crate::receipts::{action_hash, ReceiptSigner};
 use crate::{AuthorityError, Result};
+use chrono::Utc;
 use serde_json::json;
 
 pub struct BrokerRuntime<'a> {
@@ -117,6 +118,24 @@ impl<'a> BrokerRuntime<'a> {
                 return Err(AuthorityError::ApprovalFailed(
                     "approval does not match payload or policy".into(),
                 ));
+            }
+            if record.expires_at <= Utc::now() {
+                self.audit.record(
+                    "approval_expired",
+                    &json!({
+                        "action_request_id": request.id,
+                        "approval_id": record.approval_id.clone(),
+                        "expired_at": record.expires_at,
+                    }),
+                )?;
+                self.audit.record(
+                    "execution_skipped",
+                    &json!({
+                        "action_request_id": request.id,
+                        "reason": "approval expired",
+                    }),
+                )?;
+                return Err(AuthorityError::ApprovalFailed("approval expired".into()));
             }
         }
 

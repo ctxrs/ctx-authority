@@ -81,9 +81,10 @@ later, but omitted HTTP dimensions must not act as implicit wildcards. The
 For v1, `email.send` grants are invalid unless `recipient_domains` is present
 and non-empty. Recipient matching is exact and case-insensitive on the domain
 portion of a single bare `operation.to` email address. `email.send` operation
-objects may contain only `to`, `subject`, and `secret_ref`; display-name syntax,
-cc/bcc fields, subdomain wildcards, and multi-recipient payloads are future
-schema work and must deny in v1.
+objects may contain only `to` and `subject`. `http.request` and `email.send`
+payload objects may contain only `body`. Display-name syntax, cc/bcc fields,
+subdomain wildcards, query-string fields, and multi-recipient payloads are
+future schema work and must deny in v1.
 
 HTTP path constraints must be safe to compare without relying on provider
 normalization:

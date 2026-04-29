@@ -43,6 +43,7 @@ shells use this external cache root when it is available:
 ```text
 /Volumes/ctx-cache/authority-broker/target
 /Volumes/ctx-cache/authority-broker/sccache
+/Volumes/ctx-cache/authority-broker/cargo-home
 ```
 
 ## Test orchestration
@@ -60,12 +61,14 @@ Expected targets:
 - `//:full_suite`
 
 Wrapper scripts must work both from a normal checkout and under Bazel runfiles.
-They set `CARGO_TARGET_DIR` and `SCCACHE_DIR` outside the repository. `sccache`
-is wired through `AUTHORITY_BROKER_USE_SCCACHE=1`; it defaults off on Darwin
-because local code-signing and external-volume policy issues can make the Rust
-wrapper flaky. The repo must not commit a machine-specific `.cargo/config.toml`;
-developers can create one locally if they want direct `cargo` commands to always
-use a custom cache.
+They set `CARGO_HOME`, `CARGO_TARGET_DIR`, and `SCCACHE_DIR` outside the
+repository. Isolating `CARGO_HOME` prevents unrelated agent jobs from blocking
+this repo on the shared package-cache lock. `sccache` is wired through
+`AUTHORITY_BROKER_USE_SCCACHE=1`; it defaults off on Darwin because local
+code-signing and external-volume policy issues can make the Rust wrapper flaky.
+The repo must not commit a machine-specific `.cargo/config.toml`; developers can
+create one locally if they want direct `cargo` commands to always use a custom
+cache.
 
 The CLI smoke test must exercise:
 

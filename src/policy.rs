@@ -196,6 +196,9 @@ impl Grant {
         {
             return false;
         }
+        if !payload_keys_allowed(&request.payload, &["body"]) {
+            return false;
+        }
 
         let method = operation
             .get("method")
@@ -241,8 +244,11 @@ impl Grant {
         };
         if operation
             .keys()
-            .any(|key| !matches!(key.as_str(), "to" | "subject" | "secret_ref"))
+            .any(|key| !matches!(key.as_str(), "to" | "subject"))
         {
+            return false;
+        }
+        if !payload_keys_allowed(&request.payload, &["body"]) {
             return false;
         }
 
@@ -262,6 +268,16 @@ impl Grant {
 
 fn is_supported_capability(capability: &str) -> bool {
     SUPPORTED_CAPABILITIES.contains(&capability)
+}
+
+fn payload_keys_allowed(payload: &serde_json::Value, allowed_keys: &[&str]) -> bool {
+    match payload {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(object) => object
+            .keys()
+            .all(|key| allowed_keys.iter().any(|allowed| key == allowed)),
+        _ => false,
+    }
 }
 
 fn path_matches_prefix(path: &str, prefix: &str) -> bool {
@@ -636,6 +652,8 @@ grants:
         multi_recipient.operation = json!({"to": "attacker@evil.test, external@example.com"});
         let mut cc_recipient = matching.clone();
         cc_recipient.operation = json!({"to": "external@example.com", "cc": "attacker@evil.test"});
+        let mut cc_payload = matching.clone();
+        cc_payload.payload = json!({"body": "hi", "cc": "attacker@evil.test"});
 
         assert_eq!(
             policy.evaluate(&matching).unwrap().decision,
@@ -651,6 +669,10 @@ grants:
         );
         assert_eq!(
             policy.evaluate(&cc_recipient).unwrap().decision,
+            PolicyDecisionKind::Deny
+        );
+        assert_eq!(
+            policy.evaluate(&cc_payload).unwrap().decision,
             PolicyDecisionKind::Deny
         );
     }
