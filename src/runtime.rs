@@ -147,10 +147,9 @@ impl<'a> BrokerRuntime<'a> {
             approval.as_ref(),
             execution,
         )?;
-        self.audit.record(
-            "action_executed",
-            &serde_json::to_value(&receipt).map_err(AuthorityError::Json)?,
-        )?;
+        if let Ok(receipt_value) = serde_json::to_value(&receipt) {
+            let _ = self.audit.record("action_executed", &receipt_value);
+        }
         Ok(receipt)
     }
 

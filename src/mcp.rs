@@ -1,5 +1,7 @@
 use crate::models::Receipt;
-use crate::receipts::{receipt_from_json_str_strict, receipt_from_json_value_strict};
+use crate::receipts::{
+    json_value_from_str_no_duplicates, receipt_from_json_str_strict, receipt_from_json_value_strict,
+};
 use crate::Result;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -20,7 +22,7 @@ where
             continue;
         }
 
-        let response = match serde_json::from_str::<Value>(&line) {
+        let response = match json_value_from_str_no_duplicates(&line) {
             Ok(message) => handle_message(message),
             Err(err) => Some(error_response(
                 Value::Null,
@@ -529,6 +531,24 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let response: Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(response["result"], json!({}));
+    }
+
+    #[test]
+    fn stdio_loop_rejects_duplicate_keys_before_dispatch() {
+        let input = Cursor::new(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"receipts.verify","arguments":{"receipt":{"receipt_version":"authority.receipt.v1","receipt_id":"bad","receipt_id":"rcpt_test","principal":"local","agent":"demo","task":null,"action":"fake.action","resource":"fake","payload_hash":"sha256:payload","policy_hash":"sha256:policy","approval":null,"execution":{"status":"succeeded","provider":"fake","provider_request_id":null,"result":{"redacted":true}},"issued_at":"2026-04-28T00:00:00Z","signature":{"alg":"ed25519","kid":"ed25519:test","sig":"not-empty"}}}}}"#,
+        );
+        let mut output = Vec::new();
+
+        serve_stdio(input, &mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let response: Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(response["error"]["code"], -32700);
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate JSON key"));
     }
 
     fn sample_receipt(alg: &str, sig: &str) -> Value {

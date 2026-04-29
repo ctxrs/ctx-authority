@@ -228,12 +228,17 @@ pub fn verify_receipt(receipt: &Receipt, verifying_key: &VerifyingKey) -> Result
 }
 
 pub fn receipt_from_json_str_strict(text: &str) -> Result<Receipt> {
+    let value = json_value_from_str_no_duplicates(text)?;
+    receipt_from_json_value_strict(value)
+}
+
+pub fn json_value_from_str_no_duplicates(text: &str) -> Result<Value> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value = NoDuplicateJsonValue
         .deserialize(&mut deserializer)
         .map_err(AuthorityError::Json)?;
     deserializer.end().map_err(AuthorityError::Json)?;
-    receipt_from_json_value_strict(value)
+    Ok(value)
 }
 
 pub fn receipt_from_json_value_strict(value: Value) -> Result<Receipt> {

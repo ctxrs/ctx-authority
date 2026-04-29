@@ -24,7 +24,7 @@ provider credentials.
 4. Implement fake secret backend.
 5. Implement fake provider adapter.
 6. Implement policy decisions: allow, deny, require approval.
-7. Implement fake/local approval provider.
+7. Implement fail-closed approval handling plus internal approval-provider tests.
 8. Implement audit log.
 9. Implement receipt signing and verification.
 10. Implement MCP server.
@@ -39,9 +39,9 @@ The MVP is ready when:
 - `ctxa agent create demo` creates an agent profile.
 - allowed fake action succeeds.
 - denied fake action does not reach provider.
-- risky fake action asks for approval.
-- approved risky action executes.
-- rejected risky action does not execute.
+- risky fake action asks for approval and fails closed without a configured
+  human approval provider.
+- internal runtime tests cover approved and rejected approval outcomes.
 - receipt verifies offline.
 - tampered receipt fails verification.
 - raw fake secret value does not appear in logs, receipts, stdout, or stderr.

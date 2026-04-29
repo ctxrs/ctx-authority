@@ -1165,6 +1165,63 @@ fn runtime_audits_provider_failures_after_attempt() {
     assert!(events.iter().any(|(_, kind, _)| kind == "execution_failed"));
 }
 
+#[test]
+fn runtime_returns_receipt_when_final_audit_write_fails_after_execution() {
+    let home = tempfile::tempdir().unwrap();
+    let audit_path = home.path().join("audit.sqlite3");
+    let audit = AuditLog::open(&audit_path).unwrap();
+    let policy_text = fs::read_to_string(fixture("demo-policy.yaml")).unwrap();
+    let policy: PolicyDocument = serde_yaml::from_str(&policy_text).unwrap();
+    let action_text = fs::read_to_string(fixture("demo-action.json")).unwrap();
+    let request: ActionRequest = serde_json::from_str(&action_text).unwrap();
+    let approvals = ApprovalProvider::reject();
+    let provider = AuditBreakingProvider {
+        audit_path: audit_path.clone(),
+    };
+    let backend = FakeBackend::new(BTreeMap::from([(
+        "default".to_string(),
+        "fake-secret-value".to_string(),
+    )]));
+    let signer = ReceiptSigner::deterministic_for_tests([42; 32]);
+    let runtime = BrokerRuntime {
+        policy: &policy,
+        audit: &audit,
+        approvals: &approvals,
+        provider: &provider,
+        secret_backend: Some(&backend),
+        signer: &signer,
+    };
+
+    let receipt = runtime.execute(&request).unwrap();
+
+    assert_eq!(receipt.execution.status, "succeeded");
+    assert_eq!(
+        receipt.execution.provider_request_id.as_deref(),
+        Some("audit-broken-after-execute")
+    );
+}
+
+struct AuditBreakingProvider {
+    audit_path: PathBuf,
+}
+
+impl ProviderAdapter for AuditBreakingProvider {
+    fn execute(
+        &self,
+        request: &ActionRequest,
+        _secret: Option<&SecretLease>,
+    ) -> Result<ProviderExecution> {
+        fs::remove_file(&self.audit_path)?;
+        fs::create_dir(&self.audit_path)?;
+        Ok(ProviderExecution {
+            status: "succeeded".into(),
+            provider: request.resource.clone(),
+            provider_request_id: Some("audit-broken-after-execute".into()),
+            result: BTreeMap::from([("redacted".into(), serde_json::Value::Bool(true))]),
+        })
+    }
+}
+
 struct FailingProvider;
 
 impl ProviderAdapter for FailingProvider {
