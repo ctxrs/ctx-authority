@@ -462,10 +462,13 @@ impl ProviderCapabilityIssuer {
     fn new(provider: CapabilityProviderConfig) -> Result<Self> {
         let api_base = Url::parse(&provider.api_base)
             .map_err(|_| AuthorityError::Config("invalid api_base".into()))?;
+        let client = Client::builder().no_proxy().build().map_err(|err| {
+            AuthorityError::Provider(format!("provider client setup failed: {err}"))
+        })?;
         Ok(Self {
             provider,
             api_base,
-            client: Client::new(),
+            client,
         })
     }
 }
