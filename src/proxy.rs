@@ -1,9 +1,10 @@
 use crate::audit::AuditLog;
 use crate::backends::SecretBackend;
 use crate::config::{
-    canonical_host_port_for_scheme, HttpAuthType, HttpResourceConfig, HttpResourceScheme,
-    ProfileConfig,
+    canonical_host_port_for_scheme, HttpAuthType, HttpGrantConfig, HttpResourceConfig,
+    HttpResourceScheme, ProfileConfig,
 };
+use crate::grants::{matching_grant, validate_http_grants, GrantMatch};
 use crate::models::{ActionRequest, ProviderExecution, Receipt};
 use crate::policy::http_path_matches_prefix;
 use crate::receipts::{payload_hash, ReceiptSigner};
@@ -16,7 +17,7 @@ use rcgen::{
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,7 +35,9 @@ const IO_TIMEOUT: Duration = Duration::from_secs(10);
 const ACCEPT_SLEEP: Duration = Duration::from_millis(25);
 
 pub struct ProxyConfig {
+    pub profiles: Vec<ProfileConfig>,
     pub profile: ProfileConfig,
+    pub grants: Vec<HttpGrantConfig>,
     pub secret_backend: Arc<dyn SecretBackend>,
     pub audit: AuditLog,
     pub signer: ReceiptSigner,
@@ -54,6 +57,21 @@ pub struct ProxyServer {
 impl ProxyServer {
     pub fn start(config: ProxyConfig) -> Result<Self> {
         config.profile.validate()?;
+        let profiles = if config.profiles.is_empty() {
+            vec![config.profile.clone()]
+        } else {
+            config.profiles.clone()
+        };
+        for profile in &profiles {
+            profile.validate()?;
+        }
+        ensure_unique_proxy_profiles(&profiles)?;
+        ensure_active_profile_matches(&config.profile, &profiles)?;
+        ensure_unique_proxy_grants(&config.grants)?;
+        for grant in &config.grants {
+            grant.validate()?;
+        }
+        validate_http_grants(&profiles, &config.grants)?;
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
@@ -117,6 +135,42 @@ impl ProxyServer {
             }
         }
     }
+}
+
+fn ensure_unique_proxy_profiles(profiles: &[ProfileConfig]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for profile in profiles {
+        if !seen.insert(profile.id.as_str()) {
+            return Err(AuthorityError::Config(format!(
+                "duplicate profile id {}",
+                profile.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_active_profile_matches(active: &ProfileConfig, profiles: &[ProfileConfig]) -> Result<()> {
+    if profiles.iter().any(|profile| profile == active) {
+        return Ok(());
+    }
+    Err(AuthorityError::Config(format!(
+        "active proxy profile {} must match a supplied profile entry",
+        active.id
+    )))
+}
+
+fn ensure_unique_proxy_grants(grants: &[HttpGrantConfig]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for grant in grants {
+        if !seen.insert(grant.id.as_str()) {
+            return Err(AuthorityError::Config(format!(
+                "duplicate grant id {}",
+                grant.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 impl Drop for ProxyServer {
@@ -499,14 +553,33 @@ fn execute_proxy_request(
     method: &str,
     scheme: HttpResourceScheme,
 ) -> std::result::Result<(), ProxyFailure> {
-    let Some(resource) = find_resource(
+    let Some(authority) = find_authority(
         &state.config.profile,
+        &state.config.grants,
         scheme,
         &target.canonical_host_port,
         method,
         &target.path,
-    ) else {
-        record_proxy_proposal(state, method, scheme, target, "no_matching_resource");
+    )
+    .map_err(|_| {
+        ProxyFailure::new(
+            403,
+            "Forbidden",
+            "request is not allowed by this profile",
+            Some("proxy_request_denied"),
+            json!({
+                "profile": state.config.profile.id,
+                "reason": "invalid_grant_chain",
+                "method": method,
+                "host": target.canonical_host_port,
+                "path": target.path,
+                "query_present": target.query.is_some(),
+                "scheme": scheme_name(scheme),
+            }),
+        )
+    })?
+    else {
+        record_proxy_proposal(state, method, scheme, target, "no_matching_authority");
         return Err(ProxyFailure::new(
             403,
             "Forbidden",
@@ -514,7 +587,7 @@ fn execute_proxy_request(
             Some("proxy_request_denied"),
             json!({
                 "profile": state.config.profile.id,
-                "reason": "no_matching_resource",
+                "reason": "no_matching_authority",
                 "method": method,
                 "host": target.canonical_host_port,
                 "path": target.path,
@@ -523,10 +596,11 @@ fn execute_proxy_request(
             }),
         ));
     };
+    let resource_id = authority.id().to_string();
     let secret = state
         .config
         .secret_backend
-        .resolve(&resource.secret_ref)
+        .resolve(authority.secret_ref())
         .map_err(|_| {
             ProxyFailure::new(
                 502,
@@ -535,7 +609,7 @@ fn execute_proxy_request(
                 Some("proxy_secret_failed"),
                 json!({
                     "profile": state.config.profile.id,
-                    "resource": resource.id,
+                    "resource": resource_id,
                     "method": method,
                     "host": target.canonical_host_port,
                     "path": target.path,
@@ -561,7 +635,7 @@ fn execute_proxy_request(
             Some("proxy_upstream_failed"),
             json!({
                 "profile": state.config.profile.id,
-                "resource": resource.id,
+                "resource": resource_id,
                 "method": method,
                 "host": target.canonical_host_port,
                 "path": target.path,
@@ -574,7 +648,7 @@ fn execute_proxy_request(
 
     let receipt = issue_proxy_receipt(
         state,
-        resource,
+        &authority,
         target,
         method,
         scheme,
@@ -589,7 +663,7 @@ fn execute_proxy_request(
             Some("proxy_receipt_failed"),
             json!({
                 "profile": state.config.profile.id,
-                "resource": resource.id,
+                "resource": resource_id,
                 "method": method,
                 "host": target.canonical_host_port,
                 "path": target.path,
@@ -606,7 +680,7 @@ fn execute_proxy_request(
             Some("proxy_receipt_failed"),
             json!({
                 "profile": state.config.profile.id,
-                "resource": resource.id,
+                "resource": resource_id,
                 "method": method,
                 "host": target.canonical_host_port,
                 "path": target.path,
@@ -627,7 +701,7 @@ fn execute_proxy_request(
                 Some("proxy_receipt_failed"),
                 json!({
                     "profile": state.config.profile.id,
-                    "resource": resource.id,
+                    "resource": resource_id,
                     "method": method,
                     "host": target.canonical_host_port,
                     "path": target.path,
@@ -1043,6 +1117,44 @@ fn find_resource<'a>(
     })
 }
 
+enum MatchedProxyAuthority<'a> {
+    Resource(&'a HttpResourceConfig),
+    Grant(Box<GrantMatch>),
+}
+
+impl MatchedProxyAuthority<'_> {
+    fn id(&self) -> &str {
+        match self {
+            Self::Resource(resource) => &resource.id,
+            Self::Grant(grant) => &grant.grant.id,
+        }
+    }
+
+    fn secret_ref(&self) -> &str {
+        match self {
+            Self::Resource(resource) => &resource.secret_ref,
+            Self::Grant(grant) => &grant.root_secret_ref,
+        }
+    }
+}
+
+fn find_authority<'a>(
+    profile: &'a ProfileConfig,
+    grants: &[HttpGrantConfig],
+    scheme: HttpResourceScheme,
+    canonical_target_host: &str,
+    method: &str,
+    path: &str,
+) -> Result<Option<MatchedProxyAuthority<'a>>> {
+    if let Some(resource) = find_resource(profile, scheme, canonical_target_host, method, path) {
+        return Ok(Some(MatchedProxyAuthority::Resource(resource)));
+    }
+    Ok(
+        matching_grant(profile, grants, scheme, canonical_target_host, method, path)?
+            .map(|grant| MatchedProxyAuthority::Grant(Box::new(grant))),
+    )
+}
+
 fn forward_request(
     request: &ProxyRequest,
     target: &ProxyTarget,
@@ -1296,7 +1408,7 @@ fn parse_response_status(response: &[u8]) -> Option<u16> {
 
 fn issue_proxy_receipt(
     state: &ProxyState,
-    resource: &HttpResourceConfig,
+    authority: &MatchedProxyAuthority<'_>,
     target: &ProxyTarget,
     method: &str,
     scheme: HttpResourceScheme,
@@ -1327,17 +1439,22 @@ fn issue_proxy_receipt(
         agent_id: profile.agent.clone().unwrap_or_else(|| profile.id.clone()),
         task_id: None,
         capability: "http.request".into(),
-        resource: resource.id.clone(),
+        resource: authority.id().to_string(),
         operation: serde_json::Value::Object(operation),
         payload,
         payload_hash: None,
         idempotency_key: None,
         requested_at: None,
     };
-    let policy_hash = profile_policy_hash(profile, resource)?;
+    let policy_hash = authority_policy_hash(profile, authority)?;
     let mut result = BTreeMap::new();
     result.insert("redacted".into(), json!(true));
     result.insert("query_present".into(), json!(target.query.is_some()));
+    if let MatchedProxyAuthority::Grant(grant) = authority {
+        let chain_ids: Vec<&str> = grant.chain.iter().map(|item| item.id.as_str()).collect();
+        result.insert("grant_chain_hash".into(), json!(grant.chain_hash));
+        result.insert("grant_chain_ids".into(), json!(chain_ids));
+    }
     if let Some(status_code) = status_code {
         result.insert("status_code".into(), json!(status_code));
     }
@@ -1355,6 +1472,16 @@ fn issue_proxy_receipt(
         None,
         execution,
     )
+}
+
+fn authority_policy_hash(
+    profile: &ProfileConfig,
+    authority: &MatchedProxyAuthority<'_>,
+) -> Result<String> {
+    match authority {
+        MatchedProxyAuthority::Resource(resource) => profile_policy_hash(profile, resource),
+        MatchedProxyAuthority::Grant(grant) => grant_policy_hash(profile, grant),
+    }
 }
 
 fn profile_policy_hash(profile: &ProfileConfig, resource: &HttpResourceConfig) -> Result<String> {
@@ -1375,6 +1502,42 @@ fn profile_policy_hash(profile: &ProfileConfig, resource: &HttpResourceConfig) -
         },
         secret_ref_hash: &secret_ref_hash,
     })
+}
+
+fn grant_policy_hash(profile: &ProfileConfig, grant: &GrantMatch) -> Result<String> {
+    let root_secret_ref_hash = payload_hash(&SecretReferenceEnvelope {
+        secret_ref: &grant.root_secret_ref,
+    })?;
+    let chain: Vec<serde_json::Value> = grant
+        .chain
+        .iter()
+        .map(|item| {
+            Ok(json!({
+                "id": item.id,
+                "parent": item.parent,
+                "profile": item.profile,
+                "subject": item.subject,
+                "scheme": scheme_name(item.scheme),
+                "host": canonical_host_port_for_scheme(&item.host, item.scheme)
+                    .ok_or_else(|| AuthorityError::Config("invalid grant host".into()))?,
+                "methods": item.allow.methods,
+                "path_prefixes": item.allow.path_prefixes,
+                "delegation": {
+                    "allowed": item.delegation.allowed,
+                    "remaining_depth": item.delegation.remaining_depth,
+                },
+            }))
+        })
+        .collect::<Result<_>>()?;
+    payload_hash(&json!({
+        "type": "ctxa.grant-policy.v1",
+        "holder_profile": profile.id,
+        "holder_subject": profile.agent.as_deref().unwrap_or(&profile.id),
+        "matched_grant_id": grant.grant.id,
+        "chain_ids": grant.chain.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+        "chain": chain,
+        "root_secret_ref_hash": root_secret_ref_hash,
+    }))
 }
 
 fn record_proxy_proposal(
@@ -1403,6 +1566,7 @@ fn record_proxy_proposal(
 
 pub fn profile_allows_url(
     profile: &ProfileConfig,
+    grants: &[HttpGrantConfig],
     method: &str,
     url: &str,
 ) -> Result<Option<String>> {
@@ -1410,14 +1574,24 @@ pub fn profile_allows_url(
     crate::config::validate_http_method(&method)?;
     let (scheme, target) =
         parse_url_for_profile_test(url).map_err(|failure| AuthorityError::Config(failure.body))?;
-    Ok(find_resource(
+    if let Some(resource) = find_resource(
         profile,
         scheme,
         &target.canonical_host_port,
         &method,
         &target.path,
-    )
-    .map(|resource| resource.id.clone()))
+    ) {
+        return Ok(Some(resource.id.clone()));
+    }
+    Ok(matching_grant(
+        profile,
+        grants,
+        scheme,
+        &target.canonical_host_port,
+        &method,
+        &target.path,
+    )?
+    .map(|grant| grant.grant.id))
 }
 
 fn parse_url_for_profile_test(

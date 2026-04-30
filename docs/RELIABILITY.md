@@ -36,6 +36,9 @@ The default test suite should be offline.
 - Cargo build output must stay outside the repository through the Bazel wrapper
   environment or by sourcing `scripts/bazel/env.sh` before direct Cargo
   commands.
+- On macOS, wrapper scripts ad hoc sign the debug `ctxa` executable after a
+  build. This keeps CLI tests reliable when the target directory is on an
+  external cache volume.
 - Cargo package cache state defaults to `/tmp/ctxa-cargo-home` and can be
   overridden with `CTXA_CARGO_HOME`. This keeps package-cache
   locks isolated from unrelated local work.

@@ -14,12 +14,13 @@ The user wants agents to perform useful actions with real credentials, while kee
 2. User creates an agent profile.
 3. User configures a secret backend.
 4. User adds one or more HTTP or HTTPS resources to the profile.
-5. User starts an agent command with `ctxa run --profile <id> -- <command>`.
-6. Broker starts a loopback profile proxy and injects proxy environment variables.
-7. Agent sends supported HTTP or HTTPS requests through the proxy.
-8. Broker evaluates the profile rule.
-9. Broker denies or forwards the request with broker-managed auth.
-10. Broker records audit events and signed receipt metadata.
+5. User optionally creates or delegates HTTP grants held by profiles.
+6. User starts an agent command with `ctxa run --profile <id> -- <command>`.
+7. Broker starts a loopback profile proxy and injects proxy environment variables.
+8. Agent sends supported HTTP or HTTPS requests through the proxy.
+9. Broker evaluates the profile resource or profile-held grant.
+10. Broker denies or forwards the request with broker-managed auth.
+11. Broker records audit events and signed receipt metadata.
 
 ## Explicit action loop
 
@@ -39,6 +40,12 @@ The JSON action request path is still supported for policy development and deter
 ctxa init
 ctxa profile create github-reader --agent my-agent
 ctxa profile add-https github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
+ctxa profile create main-agent --agent main-agent
+ctxa profile create worker-agent --agent worker-agent
+ctxa grants create-https --id github-root --profile main-agent --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo --delegable --max-depth 2
+ctxa grants delegate --from github-root --id github-issues --profile worker-agent --allow-method GET --path-prefix /repos/example/repo/issues
+ctxa grants list --profile worker-agent
+ctxa grants show github-issues
 ctxa profile test github-reader --url https://api.github.com/repos/example/repo/issues
 ctxa doctor --profile github-reader
 ctxa run --profile github-reader -- my-agent
@@ -75,6 +82,8 @@ The repository includes a deterministic offline scenario:
 - the local proxy injects broker-managed bearer auth for allowed HTTP and HTTPS requests
 - authenticated profile-proxy denials create redacted local proposal events
 - proposal application can turn a redacted denied request into a profile resource
+- attenuable grant delegation creates child grants without copying root secret references
+- profile-held grants can authorize proxy requests and emit redacted grant-chain receipt metadata
 - proxy receipts verify offline
 - tampered receipts fail verification
 - the fake secret sentinel does not appear in logs, receipts, stdout, stderr, or generated local state

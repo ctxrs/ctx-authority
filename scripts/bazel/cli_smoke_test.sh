@@ -11,13 +11,17 @@ export CTXA_HOME="$tmp/home"
 all_output="$tmp/all-command-output.txt"
 : > "$all_output"
 
+cargo build --quiet --locked --bin ctxa
+ctxa_codesign_debug_binary_if_needed
+ctxa_bin="$CARGO_TARGET_DIR/debug/ctxa"
+
 run_ctxa() {
   local name="$1"
   shift
   local stdout="$tmp/$name.stdout"
   local stderr="$tmp/$name.stderr"
 
-  if ! cargo run --quiet --locked --bin ctxa -- "$@" >"$stdout" 2>"$stderr"; then
+  if ! "$ctxa_bin" "$@" >"$stdout" 2>"$stderr"; then
     cat "$stdout" "$stderr" >> "$all_output"
     if grep -R -n --binary-files=text 'fake-secret-value' "$tmp" "$CTXA_HOME" >/dev/null 2>&1; then
       echo "fake secret leaked while running ctxa $*" >&2
@@ -32,8 +36,15 @@ run_ctxa() {
 run_ctxa init init
 run_ctxa setup_runtime setup runtime codex --profile codex
 run_ctxa profile_create profile create github-reader --agent demo-agent
+run_ctxa profile_create_main profile create main-agent --agent main-agent
+run_ctxa profile_create_worker profile create worker-agent --agent worker-agent
 run_ctxa profile_add_https profile add-https github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
+run_ctxa grant_create grants create-https --id github-root --profile main-agent --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo --delegable --max-depth 2
+run_ctxa grant_delegate grants delegate --from github-root --id worker-issues --profile worker-agent --allow-method GET --path-prefix /repos/example/repo/issues
+run_ctxa grant_list grants list --profile worker-agent
+run_ctxa grant_show grants show worker-issues
 run_ctxa profile_test profile test github-reader --method GET --url https://api.github.com/repos/example/repo/issues
+run_ctxa profile_test_grant profile test worker-agent --method GET --url https://api.github.com/repos/example/repo/issues/1
 run_ctxa doctor_profile doctor --profile github-reader
 run_ctxa ca_status ca status
 run_ctxa proposals_list proposals list

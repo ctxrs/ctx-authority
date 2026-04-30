@@ -56,6 +56,40 @@ profiles:
 
 `env` values are non-secret hints for the child. Secret values are resolved only inside the broker.
 
+## Grants
+
+Profiles can also hold HTTP grants. Grants are global config entries, but each
+grant is held by one profile:
+
+```yaml
+grants:
+  - id: github-root
+    profile: main-agent
+    subject: main-agent
+    scheme: https
+    host: api.github.com
+    secret_ref: op://example-vault/github-token/token
+    allow:
+      methods: [GET]
+      path_prefixes: [/repos/example/repo]
+    delegation:
+      allowed: true
+      remaining_depth: 2
+  - id: github-issues
+    parent: github-root
+    profile: worker-agent
+    subject: worker-agent
+    scheme: https
+    host: api.github.com
+    allow:
+      methods: [GET]
+      path_prefixes: [/repos/example/repo/issues]
+```
+
+Child grants must be narrower than their parent grant. They do not store the
+root secret reference; the broker resolves that reference internally by walking
+the grant chain at execution time.
+
 ## CLI
 
 ```bash
@@ -69,6 +103,10 @@ ctxa profile add-https github-reader \
 ctxa profile test github-reader --method GET --url https://api.github.com/repos/example/repo/issues
 ctxa doctor --profile github-reader
 ctxa run --profile github-reader -- my-agent
+ctxa profile create main-agent --agent main-agent
+ctxa profile create worker-agent --agent worker-agent
+ctxa grants create-https --id github-root --profile main-agent --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo --delegable --max-depth 2
+ctxa grants delegate --from github-root --id github-issues --profile worker-agent --allow-method GET --path-prefix /repos/example/repo/issues
 ```
 
 Repeated `profile add-http` or `profile add-https` with the same resource id replaces that resource.
@@ -97,14 +135,15 @@ Absolute-form HTTPS targets inside the tunnel must match the CONNECT authority.
 Origin-form requests use the CONNECT authority.
 
 When forwarding HTTPS requests upstream, the broker does not follow upstream
-redirects. Redirect responses are returned to the child process so any follow-up
+redirects. Redirect responses are returned to the child process so each subsequent
 request must pass through profile matching as a new request. Upstream forwarding
 also ignores ambient proxy environment variables and does not enable automatic
 request retries.
 
 ## Request matching
 
-Allowed requests must match:
+Allowed requests must match a configured profile resource or profile-held
+grant:
 
 - configured scheme
 - configured host after lowercase/default-port normalization
@@ -117,8 +156,9 @@ Query strings may be forwarded to the upstream API, but raw query strings are no
 
 ## Proposals
 
-When an authenticated request is denied because no profile resource matches,
-the proxy records a redacted `proxy_request_proposal` audit event. Proposal
+When an authenticated request is denied because no profile resource or
+profile-held grant matches, the proxy records a redacted
+`proxy_request_proposal` audit event. Proposal
 events include profile id, agent id, method, canonical host, path, whether a
 query was present, and denial reason.
 
@@ -162,8 +202,9 @@ The receipt records:
 - resource id
 - method, canonical host, and path
 - query hash when a query is present
-- profile/resource rule hash as `policy_hash`
+- profile resource rule hash or grant-chain policy hash as `policy_hash`
 - redacted proxy execution metadata
+- redacted grant-chain metadata when the request matched a grant
 
 Denied, malformed, unauthenticated, and upstream-failed requests write redacted audit events and do not contain resolved secret values.
 
@@ -174,3 +215,5 @@ Denied, malformed, unauthenticated, and upstream-failed requests write redacted 
 - The proxy supports HTTP/1.1 proxy traffic.
 - Request headers, request bodies, upstream responses, and concurrent requests are capped.
 - Request bodies must use `Content-Length`; chunked request bodies are rejected.
+- Grant mutation commands modify local config and are not a sandbox boundary
+  against local processes with write access to `CTXA_HOME`.

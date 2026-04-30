@@ -6,7 +6,7 @@ Local capability control for AI agents.
 
 The main local workflow is `ctxa run`: a human starts an agent command inside a named profile, and `ctxa` gives that process a loopback profile proxy for the resources the profile allows.
 
-This project is part of [ctx](https://ctx.rs). Product pages and install docs live under `https://ctx.rs/authority`.
+This project is part of [ctx](https://ctx.rs). This repository is the source of truth for the `ctxa` CLI and local authority workflows.
 
 ```text
 agent command -> ctxa run -> profile -> local proxy -> secret backend -> upstream API -> receipt
@@ -19,6 +19,7 @@ Agents are becoming useful enough to send email, call APIs, manage tickets, and 
 `ctx authority` gives the agent capabilities instead of secrets:
 
 - allow this agent to read GitHub issues
+- let that agent delegate a narrower GitHub grant to a worker agent
 - require approval before this agent sends email
 - use this configured backend for secrets
 - record what happened
@@ -83,12 +84,40 @@ ctxa profile add-https github-reader \
   --path-prefix /repos/example/repo/issues
 ```
 
+Or create a delegable grant and delegate a narrower child grant:
+
+```sh
+ctxa profile create main-agent --agent main-agent
+ctxa profile create worker-agent --agent worker-agent
+ctxa grants create-https \
+  --id github-root \
+  --profile main-agent \
+  --host api.github.com \
+  --secret-ref op://example-vault/github-token/token \
+  --allow-method GET \
+  --path-prefix /repos/example/repo \
+  --delegable \
+  --max-depth 2
+ctxa grants delegate \
+  --from github-root \
+  --id github-issues \
+  --profile worker-agent \
+  --allow-method GET \
+  --path-prefix /repos/example/repo/issues
+```
+
+Child grants do not store or print the root secret reference. `ctxa` resolves
+the root secret internally only when a matching brokered request runs.
+
 Check the profile before launching an agent:
 
 ```sh
 ctxa profile test github-reader \
   --method GET \
   --url https://api.github.com/repos/example/repo/issues
+ctxa profile test worker-agent \
+  --method GET \
+  --url https://api.github.com/repos/example/repo/issues/1
 ctxa doctor --profile github-reader
 ```
 
@@ -96,6 +125,7 @@ Run an agent command inside the profile:
 
 ```sh
 ctxa run --profile github-reader -- my-agent
+ctxa run --profile worker-agent -- worker-agent-command
 ```
 
 The child process receives `HTTP_PROXY`, `HTTPS_PROXY`, common local CA trust variables, `CTXA_PROXY_URL`, `CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP and HTTPS requests through that proxy are checked against the profile, receive broker-managed bearer auth, and produce local audit events plus signed receipt metadata. HTTPS support uses a process-scoped local CA for the launched child process; `ctxa` does not install a CA into the system trust store.
@@ -108,8 +138,9 @@ ctxa proposals show <proposal-id>
 ctxa proposals apply <proposal-id> --secret-ref op://example-vault/github-token/token
 ```
 
-The lower-level action request path is available when an agent or tool submits a
-structured action request:
+The structured action API is available when an agent or tool submits an
+explicit JSON action request. The `examples/` directory includes a local
+fake-provider policy and action for trying that path:
 
 ```sh
 ctxa policy check \
@@ -152,7 +183,14 @@ A named actor or process represented by a profile.
 
 **Profile**
 
-A local configuration entry that defines non-secret child environment values and scoped HTTP resources for `ctxa run`.
+A local configuration entry that defines non-secret child environment values,
+scoped HTTP resources, and grants held by a `ctxa run` process.
+
+**Grant**
+
+A structured unit of HTTP authority held by a profile. A delegable grant can
+mint child grants that are mechanically narrower than the parent grant. Child
+grants reference their parent and do not copy root secret references.
 
 **Policy**
 
@@ -168,7 +206,10 @@ A configured source for credentials. The broker resolves secrets inside the exec
 
 **Profile Proxy**
 
-A loopback proxy created per `ctxa run`. It requires a per-run proxy credential, matches HTTP and HTTPS requests to profile resources, strips caller-supplied auth and proxy headers, injects broker-managed bearer auth, and records redacted audit metadata.
+A loopback proxy created per `ctxa run`. It requires a per-run proxy credential,
+matches HTTP and HTTPS requests to profile resources or profile-held grants,
+strips caller-supplied auth and proxy headers, injects broker-managed bearer
+auth, and records redacted audit metadata.
 
 **Receipt**
 
@@ -179,6 +220,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - `ctxa` CLI for local initialization, policy checks, action requests, audit logs, and receipt verification
 - run profiles with `ctxa profile create`, `ctxa profile add-http`, `ctxa profile add-https`, and `ctxa run`
 - loopback credential proxy for profile-scoped HTTP and HTTPS requests
+- attenuable HTTP grants with `ctxa grants create-http`, `ctxa grants create-https`, `ctxa grants delegate`, `ctxa grants list`, and `ctxa grants show`
 - redacted proposal events for authenticated requests denied by profile policy
 - proposal apply and dismiss workflow for turning denied requests into profile resources
 - local diagnostics with `ctxa doctor`, `ctxa ca status`, and `ctxa profile test`
@@ -191,13 +233,13 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - structural MCP receipt verification
 - pluggable secret backend interface
 - `.env`, OS keychain, 1Password CLI, and test backends
-- deterministic fake providers for closed-system tests
 
 ## Limits
 
 - HTTPS proxying is process-scoped to the launched child process and currently supports HTTP/1.1 clients that honor standard proxy and CA environment variables.
 - `ctxa` does not install or persist a local CA.
 - `ctxa` does not sandbox the child process or stop it from using other local tools.
+- Grant mutation commands modify local config and are not a sandbox boundary against local processes with write access to `CTXA_HOME`.
 - Secret backends protect the supported broker path; `.env` files remain readable by any process with filesystem access.
 - Receipts and audit events are local artifacts unless you move or publish them yourself.
 
@@ -231,6 +273,9 @@ bazel test //:full_suite
 
 The Bazel wrappers keep Cargo build output outside the repository. Set
 `CTXA_CACHE_ROOT` to choose a persistent cache location.
+
+Closed-system tests use deterministic fake providers and fake secret backends so
+the suite can run without external services.
 
 ## Repository
 

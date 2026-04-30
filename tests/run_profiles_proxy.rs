@@ -3,8 +3,8 @@ use base64::Engine;
 use ctxa::audit::AuditLog;
 use ctxa::backends::{FakeBackend, SecretBackend, SecretBackendConfig, SecretLease};
 use ctxa::config::{
-    AppConfig, AppPaths, HttpAllowConfig, HttpAuthConfig, HttpResourceConfig, HttpResourceScheme,
-    ProfileConfig,
+    AppConfig, AppPaths, GrantDelegationConfig, HttpAllowConfig, HttpAuthConfig, HttpGrantConfig,
+    HttpResourceConfig, HttpResourceScheme, ProfileConfig,
 };
 use ctxa::models::Receipt;
 use ctxa::proxy::{ProxyConfig, ProxyServer};
@@ -17,14 +17,37 @@ use rcgen::{
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 fn ctxa() -> Command {
-    Command::cargo_bin("ctxa").expect("ctxa binary")
+    let path = assert_cmd::cargo::cargo_bin("ctxa");
+    codesign_ctxa_for_external_target(&path);
+    Command::new(path)
 }
+
+#[cfg(target_os = "macos")]
+fn codesign_ctxa_for_external_target(path: &Path) {
+    static SIGN_ONCE: std::sync::Once = std::sync::Once::new();
+    SIGN_ONCE.call_once(|| {
+        let output = std::process::Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(path)
+            .output()
+            .expect("codesign ctxa test binary");
+        assert!(
+            output.status.success(),
+            "codesign ctxa test binary failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn codesign_ctxa_for_external_target(_path: &Path) {}
 
 fn curl_available() -> bool {
     std::process::Command::new("curl")
@@ -36,11 +59,6 @@ fn curl_available() -> bool {
 #[test]
 fn profile_cli_creates_and_updates_http_resources() {
     let home = tempfile::tempdir().unwrap();
-    ctxa()
-        .env("CTXA_HOME", home.path())
-        .arg("init")
-        .assert()
-        .success();
     ctxa()
         .env("CTXA_HOME", home.path())
         .args(["profile", "create", "github-reader", "--agent", "my-agent"])
@@ -126,7 +144,7 @@ fn profile_cli_creates_https_resources_and_tests_urls() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("allowed resource=github-issues"));
+        .stdout(predicate::str::contains("allowed authority=github-issues"));
     ctxa()
         .env("CTXA_HOME", home.path())
         .args([
@@ -353,7 +371,9 @@ fn proxy_allows_configured_http_request_and_records_verifiable_receipt() {
         ("other-secret".into(), "wrong-secret-value".into()),
     ])));
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer: signer.clone(),
@@ -420,7 +440,9 @@ fn proxy_allows_configured_https_request_and_records_verifiable_receipt() {
         "https-backend-value".into(),
     )])));
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer: signer.clone(),
@@ -494,7 +516,9 @@ fn https_upstream_redirect_to_disallowed_same_host_is_not_followed() {
     });
     let profile = https_profile_for(upstream.address, "/safe");
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
             "github".into(),
             "https-backend-value".into(),
@@ -543,7 +567,9 @@ fn https_upstream_redirect_to_different_host_is_not_followed() {
     });
     let profile = https_profile_for(upstream.address, "/safe");
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
             "github".into(),
             "https-backend-value".into(),
@@ -583,7 +609,9 @@ fn https_upstream_tls_failure_returns_bad_gateway_without_secret_leak() {
     let upstream = spawn_https_upstream();
     let profile = https_profile_for(upstream.address, "/safe");
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
             "github".into(),
             "https-backend-value".into(),
@@ -636,7 +664,9 @@ fn https_connect_rejects_authority_mismatch_inside_tunnel() {
         }],
     };
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer,
@@ -669,7 +699,9 @@ fn https_denial_records_redacted_proposal_without_secret_resolution() {
     });
     let profile = https_profile_for("127.0.0.1:9".parse().unwrap(), "/safe");
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer,
@@ -735,7 +767,9 @@ fn proposal_apply_enables_denied_https_request_and_receipt_inspection() {
 
     let resolve_count = Arc::new(AtomicUsize::new(0));
     let first_proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![initial_profile.clone()],
         profile: initial_profile,
+        grants: Vec::new(),
         secret_backend: Arc::new(CountingBackend {
             resolve_count: Arc::clone(&resolve_count),
         }),
@@ -832,7 +866,9 @@ fn proposal_apply_enables_denied_https_request_and_receipt_inspection() {
     assert_eq!(applied_resource.allow.path_prefixes, vec!["/unsafe/item"]);
 
     let second_proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![updated_profile.clone()],
         profile: updated_profile,
+        grants: Vec::new(),
         secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
             "github".into(),
             "https-backend-value".into(),
@@ -911,7 +947,7 @@ fn proposal_dismiss_hides_open_proposal() {
                 "host": "api.example.com:443",
                 "path": "/safe",
                 "query_present": false,
-                "reason": "no_matching_resource",
+                "reason": "no_matching_authority",
             }),
         )
         .unwrap();
@@ -950,6 +986,234 @@ fn proposal_dismiss_hides_open_proposal() {
 }
 
 #[test]
+fn grant_cli_delegates_without_secret_copy_and_audits() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["profile", "create", "main-agent", "--agent", "main-agent"])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "profile",
+            "create",
+            "worker-agent",
+            "--agent",
+            "worker-agent",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "grants",
+            "create-https",
+            "--id",
+            "github-root",
+            "--profile",
+            "main-agent",
+            "--host",
+            "api.github.com",
+            "--secret-ref",
+            "op://example-vault/github-token/token",
+            "--allow-method",
+            "GET",
+            "--path-prefix",
+            "/repos/acme/app",
+            "--delegable",
+            "--max-depth",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("op://").not());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "grants",
+            "delegate",
+            "--from",
+            "github-root",
+            "--id",
+            "github-issues",
+            "--profile",
+            "worker-agent",
+            "--allow-method",
+            "GET",
+            "--path-prefix",
+            "/repos/acme/app/issues",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("github-issues"));
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "grants",
+            "delegate",
+            "--from",
+            "github-root",
+            "--id",
+            "github-admin",
+            "--profile",
+            "worker-agent",
+            "--allow-method",
+            "GET",
+            "--path-prefix",
+            "/repos/acme",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("path_prefix"));
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["grants", "show", "github-root"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"has_secret_ref\": true"))
+        .stdout(predicate::str::contains("op://").not());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "profile",
+            "test",
+            "worker-agent",
+            "--url",
+            "https://api.github.com/repos/acme/app/issues/1",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("allowed authority=github-issues"));
+
+    let config = AppConfig::load(&home.path().join("config.yaml")).unwrap();
+    let child = config.grant("github-issues").unwrap();
+    assert_eq!(child.secret_ref, None);
+    assert_eq!(child.parent.as_deref(), Some("github-root"));
+
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let text = serde_json::to_string(&audit.list_all().unwrap()).unwrap();
+    assert!(text.contains("grant_created"));
+    assert!(text.contains("grant_delegated"));
+    assert!(!text.contains("op://example-vault/github-token/token"));
+}
+
+#[test]
+fn grant_backed_proxy_request_uses_root_secret_and_receipts_chain() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = AppPaths::for_home(home.path().into());
+    paths.ensure().unwrap();
+    let audit = AuditLog::open(&paths.audit_db).unwrap();
+    let signer = ReceiptSigner::load_or_create(&paths).unwrap();
+    let upstream = spawn_https_upstream();
+    let worker_profile = ProfileConfig {
+        id: "worker-agent".into(),
+        agent: Some("worker-agent".into()),
+        env_vars: BTreeMap::new(),
+        http_resources: Vec::new(),
+    };
+    let grants = vec![
+        HttpGrantConfig {
+            id: "github-root".into(),
+            parent: None,
+            profile: "main-agent".into(),
+            subject: "main-agent".into(),
+            scheme: HttpResourceScheme::Https,
+            host: upstream.address.to_string(),
+            secret_ref: Some("github".into()),
+            allow: HttpAllowConfig {
+                methods: vec!["GET".into(), "POST".into()],
+                path_prefixes: vec!["/repos/acme/app".into()],
+            },
+            delegation: GrantDelegationConfig {
+                allowed: true,
+                remaining_depth: 2,
+            },
+        },
+        HttpGrantConfig {
+            id: "github-issues".into(),
+            parent: Some("github-root".into()),
+            profile: "worker-agent".into(),
+            subject: "worker-agent".into(),
+            scheme: HttpResourceScheme::Https,
+            host: upstream.address.to_string(),
+            secret_ref: None,
+            allow: HttpAllowConfig {
+                methods: vec!["GET".into()],
+                path_prefixes: vec!["/repos/acme/app/issues".into()],
+            },
+            delegation: GrantDelegationConfig::default(),
+        },
+    ];
+    AppConfig {
+        profiles: vec![
+            ProfileConfig {
+                id: "main-agent".into(),
+                agent: Some("main-agent".into()),
+                env_vars: BTreeMap::new(),
+                http_resources: Vec::new(),
+            },
+            worker_profile.clone(),
+        ],
+        grants: grants.clone(),
+        ..Default::default()
+    }
+    .save(&paths.config_file)
+    .unwrap();
+
+    let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![
+            ProfileConfig {
+                id: "main-agent".into(),
+                agent: Some("main-agent".into()),
+                env_vars: BTreeMap::new(),
+                http_resources: Vec::new(),
+            },
+            worker_profile.clone(),
+        ],
+        profile: worker_profile,
+        grants,
+        secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
+            "github".into(),
+            "grant-backed-secret".into(),
+        )]))),
+        audit: audit.clone(),
+        signer,
+        upstream_root_certs_pem: vec![upstream.root_cert_pem.as_bytes().to_vec()],
+    })
+    .unwrap();
+    let client = proxied_https_client(&proxy, true);
+    let response = client
+        .get(format!(
+            "https://{}/repos/acme/app/issues/1",
+            upstream.address
+        ))
+        .send()
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let received = upstream.received.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        header(&received.headers, "Authorization"),
+        Some("Bearer grant-backed-secret")
+    );
+    let receipts = audit.list_all_kind("proxy_request_receipt").unwrap();
+    assert_eq!(receipts.len(), 1);
+    let receipt = receipts.first().unwrap().1.clone();
+    assert_eq!(receipt["resource"], "github-issues");
+    assert_eq!(
+        receipt["execution"]["result"]["grant_chain_ids"],
+        serde_json::json!(["github-root", "github-issues"])
+    );
+    let receipt_text = serde_json::to_string(&receipt).unwrap();
+    assert!(!receipt_text.contains("grant-backed-secret"));
+    assert!(!receipt_text.contains("op://"));
+
+    proxy.stop();
+    upstream.join();
+}
+
+#[test]
 fn proxy_rejects_header_unsafe_bearer_secrets() {
     let home = tempfile::tempdir().unwrap();
     let paths = AppPaths::for_home(home.path().to_path_buf());
@@ -962,7 +1226,9 @@ fn proxy_rejects_header_unsafe_bearer_secrets() {
         "bad\r\nX-Leak: yes".into(),
     )])));
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer,
@@ -985,6 +1251,100 @@ fn proxy_rejects_header_unsafe_bearer_secrets() {
 }
 
 #[test]
+fn proxy_start_rejects_duplicate_grant_ids() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = AppPaths::for_home(home.path().to_path_buf());
+    paths.ensure().unwrap();
+    let audit = AuditLog::open(&paths.audit_db).unwrap();
+    let signer = ReceiptSigner::load_or_create(&paths).unwrap();
+    let profile = ProfileConfig {
+        id: "worker".into(),
+        agent: Some("worker".into()),
+        env_vars: BTreeMap::new(),
+        http_resources: Vec::new(),
+    };
+    let grant = HttpGrantConfig {
+        id: "dup".into(),
+        parent: None,
+        profile: "worker".into(),
+        subject: "worker".into(),
+        scheme: HttpResourceScheme::Http,
+        host: "api.example.com".into(),
+        secret_ref: Some("github".into()),
+        allow: HttpAllowConfig {
+            methods: vec!["GET".into()],
+            path_prefixes: vec!["/safe".into()],
+        },
+        delegation: GrantDelegationConfig::default(),
+    };
+
+    let err = match ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
+        profile,
+        grants: vec![grant.clone(), grant],
+        secret_backend: Arc::new(FakeBackend::new(BTreeMap::new())),
+        audit,
+        signer,
+        upstream_root_certs_pem: Vec::new(),
+    }) {
+        Ok(_) => panic!("proxy started with duplicate grant ids"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("duplicate grant id dup"), "{err}");
+}
+
+#[test]
+fn proxy_start_rejects_active_profile_drift() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = AppPaths::for_home(home.path().to_path_buf());
+    paths.ensure().unwrap();
+    let audit = AuditLog::open(&paths.audit_db).unwrap();
+    let signer = ReceiptSigner::load_or_create(&paths).unwrap();
+    let listed_profile = ProfileConfig {
+        id: "worker".into(),
+        agent: Some("worker".into()),
+        env_vars: BTreeMap::new(),
+        http_resources: Vec::new(),
+    };
+    let active_profile = ProfileConfig {
+        agent: Some("different-worker".into()),
+        ..listed_profile.clone()
+    };
+    let grant = HttpGrantConfig {
+        id: "worker-root".into(),
+        parent: None,
+        profile: "worker".into(),
+        subject: "worker".into(),
+        scheme: HttpResourceScheme::Http,
+        host: "api.example.com".into(),
+        secret_ref: Some("github".into()),
+        allow: HttpAllowConfig {
+            methods: vec!["GET".into()],
+            path_prefixes: vec!["/safe".into()],
+        },
+        delegation: GrantDelegationConfig::default(),
+    };
+
+    let err = match ProxyServer::start(ProxyConfig {
+        profiles: vec![listed_profile],
+        profile: active_profile,
+        grants: vec![grant],
+        secret_backend: Arc::new(FakeBackend::new(BTreeMap::new())),
+        audit,
+        signer,
+        upstream_root_certs_pem: Vec::new(),
+    }) {
+        Ok(_) => panic!("proxy started with active profile drift"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("active proxy profile worker must match"),
+        "{err}"
+    );
+}
+
+#[test]
 fn proxy_denies_before_secret_resolution() {
     let home = tempfile::tempdir().unwrap();
     let paths = AppPaths::for_home(home.path().to_path_buf());
@@ -997,7 +1357,9 @@ fn proxy_denies_before_secret_resolution() {
     });
     let profile = profile_for("127.0.0.1:9".parse().unwrap(), "/safe");
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: vec![profile.clone()],
         profile,
+        grants: Vec::new(),
         secret_backend: backend,
         audit: audit.clone(),
         signer,

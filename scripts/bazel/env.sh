@@ -94,3 +94,24 @@ if [[ -z "${RUSTC_WRAPPER+x}" ]]; then
 fi
 
 mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
+
+ctxa_codesign_debug_binary_if_needed() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+  if [[ "${CTXA_CODESIGN_DEBUG_BINARY:-1}" != "1" ]]; then
+    return 0
+  fi
+  if ! command -v codesign >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local binary="$CARGO_TARGET_DIR/debug/ctxa"
+  if [[ -x "$binary" ]]; then
+    local codesign_output
+    if ! codesign_output="$(codesign --force --sign - "$binary" 2>&1 >/dev/null)"; then
+      printf '%s\n' "$codesign_output" >&2
+      return 1
+    fi
+  fi
+}

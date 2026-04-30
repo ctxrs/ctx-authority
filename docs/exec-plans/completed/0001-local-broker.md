@@ -32,10 +32,9 @@ The repository includes a local-first `ctxa` broker that lets an agent request f
 - the fake secret sentinel does not appear in logs, receipts, stdout, or stderr
 - MCP tests cover implemented metadata and structural receipt verification tools
 
-## Follow-up work
+## Boundaries
 
-- human approval UI
-- additional provider adapters
-- MCP action execution
-- MCP approval state
-- key-based receipt verification through MCP
+This completed slice focuses on local policy checks, fail-closed execution,
+auditable fake-provider actions, and signed receipts. Additional adapters and
+interactive approval surfaces belong in separate specs so this plan remains a
+record of shipped behavior.

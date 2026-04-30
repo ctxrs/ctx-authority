@@ -1,30 +1,31 @@
 # Completed plan: Authority workflow UX
 
-## Goal
+## Outcome
 
-Make `ctxa` feel better than a raw credential proxy for local agent users.
+The repository includes a complete local authority workflow around run
+profiles, redacted proposals, and local receipt inspection.
 
-The current proxy path can safely broker HTTP and HTTPS credentials, but users
-still need to hand-edit profile resources and inspect raw audit output. This
-pass turns the proxy into an agent authority workflow:
+The shipped flow is:
 
 ```text
 setup agent profile -> run agent -> denied request becomes proposal -> human applies proposal -> agent reruns -> signed receipt is inspectable
 ```
 
-## Positioning
+## Product shape
 
-This pass should reinforce the product distinction:
+The workflow is built from these pieces:
 
-- `ctxa` is not only a secrets vault.
-- `ctxa` is a local authority layer that gives agents scoped capabilities,
-  redacted proposals, verifiable receipts, and runtime-agnostic instructions.
+- scoped profile resources define what an agent can access
+- denied authenticated requests become redacted proposals
+- applied proposals create explicit profile resources
+- receipts give the operator a local record of what ran
+- runtime-agnostic instructions let different agents use the same broker
 
-## Scope for this implementation
+## Implemented scope
 
 ### One-command setup
 
-Add:
+Implemented command:
 
 ```text
 ctxa setup runtime <codex|claude-code|openclaw|generic> --profile <id> [--agent <id>]
@@ -53,8 +54,8 @@ service, or require network access.
 
 ### Proposal-to-policy workflow
 
-Existing denied authenticated proxy requests create redacted proposal events.
-Make those proposals actionable:
+Denied authenticated proxy requests create redacted proposal events that can be
+listed, inspected, applied, or dismissed:
 
 ```text
 ctxa proposals list [--all] [--limit <n>]
@@ -93,7 +94,7 @@ Behavior:
 
 ### Receipt UX
 
-Add:
+Implemented commands:
 
 ```text
 ctxa receipts list [--limit <n>]
@@ -113,11 +114,11 @@ Behavior:
 
 ### Compatibility and docs
 
-- Add docs for the setup/proposal/receipt loop.
-- Update the runtime-agnostic skill so agents know to use proposals instead of
+- Added docs for the setup/proposal/receipt loop.
+- Updated the runtime-agnostic skill so agents know to use proposals instead of
   asking for raw credentials after a denial.
-- Extend CLI smoke tests to cover setup, proposal listing, and receipt listing.
-- Keep all tests closed-system with fake backends and loopback servers.
+- Extended CLI smoke tests to cover setup, proposal listing, and receipt listing.
+- Kept all tests closed-system with fake backends and loopback servers.
 
 ## Security constraints
 

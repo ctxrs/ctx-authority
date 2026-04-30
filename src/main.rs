@@ -3,10 +3,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ctxa::audit::AuditLog;
 use ctxa::boundary::action_request_from_json_str;
 use ctxa::config::{
-    AgentConfig, AppConfig, AppPaths, HttpAllowConfig, HttpAuthConfig, HttpResourceConfig,
-    HttpResourceScheme, PolicyConfig, ProfileConfig,
+    AgentConfig, AppConfig, AppPaths, GrantDelegationConfig, HttpAllowConfig, HttpAuthConfig,
+    HttpGrantConfig, HttpResourceConfig, HttpResourceScheme, PolicyConfig, ProfileConfig,
 };
 use ctxa::execution_context::{load_policy_file, ExecutionContext};
+use ctxa::grants::{child_grant_is_subset, grant_chain, normalize_methods, profile_subject};
 use ctxa::models::{ActionRequest, Receipt};
 use ctxa::policy::PolicyDocument;
 use ctxa::proxy::{can_create_process_ca_file, profile_allows_url, ProxyConfig, ProxyServer};
@@ -30,53 +31,71 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(about = "Initialize local ctx authority state")]
     Init,
+    #[command(about = "Manage trusted agent records")]
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
     },
+    #[command(about = "Check and trust local policy files")]
     Policy {
         #[command(subcommand)]
         command: PolicyCommand,
     },
+    #[command(about = "Manage run profiles and scoped HTTP resources")]
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
     },
+    #[command(about = "Manage attenuable HTTP grants")]
+    Grants {
+        #[command(subcommand)]
+        command: GrantCommand,
+    },
+    #[command(about = "Install local runtime instructions")]
     Setup {
         #[command(subcommand)]
         command: SetupCommand,
     },
+    #[command(about = "Inspect and apply redacted denied-request proposals")]
     Proposals {
         #[command(subcommand)]
         command: ProposalCommand,
     },
+    #[command(about = "Inspect local certificate authority state")]
     Ca {
         #[command(subcommand)]
         command: CaCommand,
     },
+    #[command(about = "Run local diagnostics")]
     Doctor {
         #[arg(long)]
         profile: Option<String>,
     },
+    #[command(about = "Request an explicit structured action")]
     Action {
         #[command(subcommand)]
         command: ActionCommand,
     },
+    #[command(about = "Run an agent command inside a scoped profile")]
     Run {
         #[arg(long)]
         profile: String,
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
+    #[command(about = "List, show, and verify local receipts")]
     Receipts {
         #[command(subcommand)]
         command: ReceiptCommand,
     },
+    #[command(about = "Print local audit events")]
     Log {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    #[command(about = "Run the stdio MCP server")]
     Mcp {
         #[command(subcommand)]
         command: McpCommand,
@@ -85,6 +104,7 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AgentCommand {
+    #[command(about = "Create or update a trusted agent")]
     Create {
         id: String,
         #[arg(long)]
@@ -94,12 +114,14 @@ enum AgentCommand {
 
 #[derive(Debug, Subcommand)]
 enum PolicyCommand {
+    #[command(about = "Evaluate a policy against an action file")]
     Check {
         #[arg(long)]
         policy: PathBuf,
         #[arg(long)]
         file: PathBuf,
     },
+    #[command(about = "Pin a policy file hash in local config")]
     Trust {
         #[arg(long)]
         id: String,
@@ -110,11 +132,13 @@ enum PolicyCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProfileCommand {
+    #[command(about = "Create or update a run profile")]
     Create {
         id: String,
         #[arg(long)]
         agent: Option<String>,
     },
+    #[command(about = "Add or replace an HTTP resource on a profile")]
     AddHttp {
         profile: String,
         #[arg(long)]
@@ -128,6 +152,7 @@ enum ProfileCommand {
         #[arg(long = "path-prefix", required = true)]
         path_prefixes: Vec<String>,
     },
+    #[command(about = "Add or replace an HTTPS resource on a profile")]
     AddHttps {
         profile: String,
         #[arg(long)]
@@ -141,6 +166,7 @@ enum ProfileCommand {
         #[arg(long = "path-prefix", required = true)]
         path_prefixes: Vec<String>,
     },
+    #[command(about = "Check whether a profile allows a URL")]
     Test {
         profile: String,
         #[arg(long)]
@@ -152,6 +178,7 @@ enum ProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum ActionCommand {
+    #[command(about = "Execute a structured action through trusted local policy")]
     Request {
         #[arg(long)]
         file: PathBuf,
@@ -160,15 +187,16 @@ enum ActionCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProposalCommand {
+    #[command(about = "List denied-request proposals")]
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
         #[arg(long)]
         all: bool,
     },
-    Show {
-        id: String,
-    },
+    #[command(about = "Show a redacted proposal")]
+    Show { id: String },
+    #[command(about = "Apply a proposal as a profile resource")]
     Apply {
         id: String,
         #[arg(long)]
@@ -182,6 +210,7 @@ enum ProposalCommand {
         #[arg(long)]
         replace: bool,
     },
+    #[command(about = "Dismiss a proposal")]
     Dismiss {
         id: String,
         #[arg(long)]
@@ -190,7 +219,60 @@ enum ProposalCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum GrantCommand {
+    #[command(about = "List configured HTTP grants")]
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    #[command(about = "Show a grant without printing secret references")]
+    Show { id: String },
+    #[command(about = "Create a root HTTP grant")]
+    CreateHttp(GrantCreateOptions),
+    #[command(about = "Create a root HTTPS grant")]
+    CreateHttps(GrantCreateOptions),
+    #[command(about = "Delegate a mechanically narrower child grant")]
+    Delegate {
+        #[arg(long = "from")]
+        from: String,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        profile: String,
+        #[arg(long = "allow-method", required = true)]
+        allow_methods: Vec<String>,
+        #[arg(long = "path-prefix", required = true)]
+        path_prefixes: Vec<String>,
+        #[arg(long)]
+        delegable: bool,
+        #[arg(long, default_value_t = 0)]
+        max_depth: u8,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+struct GrantCreateOptions {
+    #[arg(long)]
+    id: String,
+    #[arg(long)]
+    profile: String,
+    #[arg(long)]
+    host: String,
+    #[arg(long)]
+    secret_ref: String,
+    #[arg(long = "allow-method", required = true)]
+    allow_methods: Vec<String>,
+    #[arg(long = "path-prefix", required = true)]
+    path_prefixes: Vec<String>,
+    #[arg(long)]
+    delegable: bool,
+    #[arg(long, default_value_t = 0)]
+    max_depth: u8,
+}
+
+#[derive(Debug, Subcommand)]
 enum SetupCommand {
+    #[command(about = "Create a profile and install runtime instructions")]
     Runtime {
         runtime: AgentRuntime,
         #[arg(long)]
@@ -231,25 +313,26 @@ impl AgentRuntime {
 
 #[derive(Debug, Subcommand)]
 enum CaCommand {
+    #[command(about = "Show local profile proxy CA support")]
     Status,
 }
 
 #[derive(Debug, Subcommand)]
 enum ReceiptCommand {
+    #[command(about = "List local receipts")]
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    Show {
-        id: String,
-    },
-    Verify {
-        file: PathBuf,
-    },
+    #[command(about = "Show a stored local receipt")]
+    Show { id: String },
+    #[command(about = "Verify a receipt with the local signing key")]
+    Verify { file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]
 enum McpCommand {
+    #[command(about = "Serve MCP over stdio")]
     Serve,
 }
 
@@ -260,6 +343,7 @@ fn main() -> anyhow::Result<()> {
         Command::Agent { command } => agent(command),
         Command::Policy { command } => policy(command),
         Command::Profile { command } => profile(command),
+        Command::Grants { command } => grants(command),
         Command::Setup { command } => setup(command),
         Command::Proposals { command } => proposals(command),
         Command::Ca { command } => ca(command),
@@ -383,13 +467,206 @@ fn profile_test(profile: String, method: String, url: String) -> anyhow::Result<
     let profile_config = config
         .profile(&profile)
         .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
-    match profile_allows_url(profile_config, &method, &url)? {
+    match profile_allows_url(profile_config, &config.grants, &method, &url)? {
         Some(resource) => {
-            println!("allowed resource={resource}");
+            println!("allowed authority={resource}");
             Ok(())
         }
         None => anyhow::bail!("denied by profile {profile}"),
     }
+}
+
+fn grants(command: GrantCommand) -> anyhow::Result<()> {
+    match command {
+        GrantCommand::List { profile } => list_grants(profile),
+        GrantCommand::Show { id } => show_grant(id),
+        GrantCommand::CreateHttp(options) => create_root_grant(HttpResourceScheme::Http, options),
+        GrantCommand::CreateHttps(options) => create_root_grant(HttpResourceScheme::Https, options),
+        GrantCommand::Delegate {
+            from,
+            id,
+            profile,
+            allow_methods,
+            path_prefixes,
+            delegable,
+            max_depth,
+        } => delegate_grant(
+            from,
+            id,
+            profile,
+            allow_methods,
+            path_prefixes,
+            delegable,
+            max_depth,
+        ),
+    }
+}
+
+fn list_grants(profile: Option<String>) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    for grant in &config.grants {
+        if profile
+            .as_deref()
+            .is_some_and(|profile| profile != grant.profile)
+        {
+            continue;
+        }
+        let parent = grant.parent.as_deref().unwrap_or("-");
+        println!(
+            "{} profile={} subject={} parent={} scheme={} host={} delegable={} depth={}",
+            grant.id,
+            grant.profile,
+            grant.subject,
+            parent,
+            scheme_name(grant.scheme),
+            grant.host,
+            grant.delegation.allowed,
+            grant.delegation.remaining_depth
+        );
+    }
+    Ok(())
+}
+
+fn show_grant(id: String) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    let grant = config
+        .grant(&id)
+        .ok_or_else(|| anyhow::anyhow!("grant {id} is not configured"))?;
+    let chain = grant_chain(&config.grants, &id)?;
+    let chain_ids: Vec<&str> = chain.iter().map(|grant| grant.id.as_str()).collect();
+    let value = json!({
+        "id": grant.id,
+        "parent": grant.parent,
+        "profile": grant.profile,
+        "subject": grant.subject,
+        "scheme": scheme_name(grant.scheme),
+        "host": grant.host,
+        "has_secret_ref": grant.secret_ref.is_some(),
+        "allow": grant.allow,
+        "delegation": grant.delegation,
+        "chain": chain_ids,
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn create_root_grant(
+    scheme: HttpResourceScheme,
+    options: GrantCreateOptions,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    if config.grant(&options.id).is_some() {
+        anyhow::bail!("grant {} already exists", options.id);
+    }
+    if options.delegable && options.max_depth == 0 {
+        anyhow::bail!("delegable grants must specify --max-depth greater than zero");
+    }
+    if !options.delegable && options.max_depth != 0 {
+        anyhow::bail!("--max-depth requires --delegable");
+    }
+    let profile = config
+        .profile(&options.profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {} is not configured", options.profile))?;
+    let grant = HttpGrantConfig {
+        id: options.id.clone(),
+        parent: None,
+        profile: options.profile.clone(),
+        subject: profile_subject(profile),
+        scheme,
+        host: options.host,
+        secret_ref: Some(options.secret_ref),
+        allow: HttpAllowConfig {
+            methods: normalize_methods(options.allow_methods),
+            path_prefixes: options.path_prefixes,
+        },
+        delegation: GrantDelegationConfig {
+            allowed: options.delegable,
+            remaining_depth: if options.delegable {
+                options.max_depth
+            } else {
+                0
+            },
+        },
+    };
+    let audit_data = redacted_grant_audit("grant_created", &grant);
+    config.grants.push(grant);
+    config.save(&paths.config_file)?;
+    AuditLog::open(&paths.audit_db)?.record("grant_created", &audit_data)?;
+    println!("grant {}", options.id);
+    Ok(())
+}
+
+fn delegate_grant(
+    from: String,
+    id: String,
+    profile: String,
+    allow_methods: Vec<String>,
+    path_prefixes: Vec<String>,
+    delegable: bool,
+    max_depth: u8,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    if config.grant(&id).is_some() {
+        anyhow::bail!("grant {id} already exists");
+    }
+    let parent = config
+        .grant(&from)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("grant {from} is not configured"))?;
+    if delegable && max_depth == 0 {
+        anyhow::bail!("delegable grants must specify --max-depth greater than zero");
+    }
+    if !delegable && max_depth != 0 {
+        anyhow::bail!("--max-depth requires --delegable");
+    }
+    let child_profile = config
+        .profile(&profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
+    let child = HttpGrantConfig {
+        id: id.clone(),
+        parent: Some(parent.id.clone()),
+        profile: profile.clone(),
+        subject: profile_subject(child_profile),
+        scheme: parent.scheme,
+        host: parent.host.clone(),
+        secret_ref: None,
+        allow: HttpAllowConfig {
+            methods: normalize_methods(allow_methods),
+            path_prefixes,
+        },
+        delegation: GrantDelegationConfig {
+            allowed: delegable,
+            remaining_depth: if delegable { max_depth } else { 0 },
+        },
+    };
+    child_grant_is_subset(&parent, &child)?;
+    let audit_data = redacted_grant_audit("grant_delegated", &child);
+    config.grants.push(child);
+    config.save(&paths.config_file)?;
+    AuditLog::open(&paths.audit_db)?.record("grant_delegated", &audit_data)?;
+    println!("grant {id}");
+    Ok(())
+}
+
+fn redacted_grant_audit(kind: &str, grant: &HttpGrantConfig) -> Value {
+    json!({
+        "kind": kind,
+        "id": grant.id,
+        "parent": grant.parent,
+        "profile": grant.profile,
+        "subject": grant.subject,
+        "scheme": scheme_name(grant.scheme),
+        "host": grant.host,
+        "has_secret_ref": grant.secret_ref.is_some(),
+        "allow": grant.allow,
+        "delegation": grant.delegation,
+    })
 }
 
 fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
@@ -411,7 +688,9 @@ fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
         })?
         .build()?;
     let proxy = ProxyServer::start(ProxyConfig {
+        profiles: config.profiles.clone(),
         profile: profile.clone(),
+        grants: config.grants.clone(),
         secret_backend: Arc::from(secret_backend),
         audit: AuditLog::open(&paths.audit_db)?,
         signer: ReceiptSigner::load_or_create(&paths)?,

@@ -1,4 +1,5 @@
 use crate::backends::SecretBackendConfig;
+use crate::grants::validate_http_grants;
 use crate::policy::is_valid_http_path_prefix;
 use crate::{AuthorityError, Result};
 use directories::ProjectDirs;
@@ -52,6 +53,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub profiles: Vec<ProfileConfig>,
     #[serde(default)]
+    pub grants: Vec<HttpGrantConfig>,
+    #[serde(default)]
     pub secret_backend: Option<SecretBackendConfig>,
 }
 
@@ -97,6 +100,34 @@ pub struct HttpResourceConfig {
     pub auth: HttpAuthConfig,
     #[serde(default)]
     pub allow: HttpAllowConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpGrantConfig {
+    pub id: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    pub profile: String,
+    pub subject: String,
+    #[serde(default = "default_http_resource_scheme")]
+    pub scheme: HttpResourceScheme,
+    pub host: String,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+    #[serde(default)]
+    pub allow: HttpAllowConfig,
+    #[serde(default)]
+    pub delegation: GrantDelegationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GrantDelegationConfig {
+    #[serde(default)]
+    pub allowed: bool,
+    #[serde(default)]
+    pub remaining_depth: u8,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -174,9 +205,14 @@ impl AppConfig {
             "profile",
             self.profiles.iter().map(|profile| profile.id.as_str()),
         )?;
+        ensure_unique_ids("grant", self.grants.iter().map(|grant| grant.id.as_str()))?;
         for profile in &self.profiles {
             profile.validate()?;
         }
+        for grant in &self.grants {
+            grant.validate()?;
+        }
+        validate_http_grants(&self.profiles, &self.grants)?;
         Ok(())
     }
 
@@ -186,6 +222,10 @@ impl AppConfig {
 
     pub fn profile_mut(&mut self, id: &str) -> Option<&mut ProfileConfig> {
         self.profiles.iter_mut().find(|profile| profile.id == id)
+    }
+
+    pub fn grant(&self, id: &str) -> Option<&HttpGrantConfig> {
+        self.grants.iter().find(|grant| grant.id == id)
     }
 }
 
@@ -243,6 +283,62 @@ impl HttpResourceConfig {
                     self.id, prefix
                 )));
             }
+        }
+        Ok(())
+    }
+}
+
+impl HttpGrantConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_id("grant", &self.id)?;
+        if let Some(parent) = &self.parent {
+            validate_id("grant parent", parent)?;
+        }
+        validate_id("grant profile", &self.profile)?;
+        validate_id("grant subject", &self.subject)?;
+        validate_host(&self.host, self.scheme)?;
+        if let Some(secret_ref) = &self.secret_ref {
+            if secret_ref.trim().is_empty() {
+                return Err(AuthorityError::Config(format!(
+                    "grant {} has an empty secret_ref",
+                    self.id
+                )));
+            }
+        }
+        if self.allow.methods.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "grant {} must specify at least one method",
+                self.id
+            )));
+        }
+        if self.allow.path_prefixes.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "grant {} must specify at least one path_prefix",
+                self.id
+            )));
+        }
+        for method in &self.allow.methods {
+            validate_http_method(method)?;
+        }
+        for prefix in &self.allow.path_prefixes {
+            if !is_valid_http_path_prefix(prefix) {
+                return Err(AuthorityError::Config(format!(
+                    "grant {} has invalid path_prefix {}",
+                    self.id, prefix
+                )));
+            }
+        }
+        if !self.delegation.allowed && self.delegation.remaining_depth != 0 {
+            return Err(AuthorityError::Config(format!(
+                "grant {} has remaining_depth without delegation",
+                self.id
+            )));
+        }
+        if self.delegation.allowed && self.delegation.remaining_depth == 0 {
+            return Err(AuthorityError::Config(format!(
+                "grant {} allows delegation but has zero remaining_depth",
+                self.id
+            )));
         }
         Ok(())
     }

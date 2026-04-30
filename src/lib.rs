@@ -6,6 +6,7 @@ pub mod canonical;
 pub mod config;
 pub mod error;
 pub mod execution_context;
+pub mod grants;
 pub mod mcp;
 pub mod models;
 pub mod policy;

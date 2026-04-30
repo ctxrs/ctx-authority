@@ -3,4 +3,6 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/env.sh"
 cd "$(ctxa_workspace_root)"
+cargo test --all-targets --all-features --locked --no-run
+ctxa_codesign_debug_binary_if_needed
 cargo test --all-targets --all-features --locked

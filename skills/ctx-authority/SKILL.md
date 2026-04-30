@@ -16,6 +16,9 @@ Request capabilities, not secrets.
 ctxa run --profile <profile-id> -- <agent-or-tool-command>
 ctxa profile test <profile-id> --url <url> [--method <METHOD>]
 ctxa doctor --profile <profile-id>
+ctxa grants list [--profile <profile-id>]
+ctxa grants show <grant-id>
+ctxa grants delegate --from <grant-id> --id <child-grant-id> --profile <profile-id> --allow-method <METHOD> --path-prefix <path>
 ctxa proposals list
 ctxa proposals show <proposal-id>
 ctxa action request --file <action.json>
@@ -54,6 +57,11 @@ asking for raw credentials.
 If a `ctxa run` API request is denied, tell the human that they can inspect
 redacted proposals with `ctxa proposals list`. Do not ask for the backing token
 or attempt the request outside the proxy.
+
+If you hold a delegable grant and need to hand a narrower capability to another
+profile, use `ctxa grants delegate`. The child grant must stay within the
+parent grant's method and path scope. Do not ask for or copy the backing secret
+reference.
 
 If `ctxa` says approval is required, wait for approval or tell the human what
 approval is needed. Do not change the payload after approval. A changed payload

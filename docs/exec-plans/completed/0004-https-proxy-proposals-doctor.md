@@ -1,19 +1,19 @@
 # Completed plan: HTTPS proxy, proposals, and doctor
 
-## Goal
+## Outcome
 
-Make `ctxa run` useful for common agent traffic that uses HTTPS APIs while
-preserving the existing capability model:
+`ctxa run` supports common agent traffic that uses HTTPS APIs while preserving
+the capability model:
 
 ```text
 agent process -> HTTPS_PROXY -> ctxa local proxy -> profile rule -> secret backend -> upstream HTTPS API -> audit + receipt
 ```
 
-## Scope
+## Implemented scope
 
 ### Process-scoped HTTPS proxy
 
-- Add an explicit `scheme` field to profile HTTP resources. Existing resources
+- Added an explicit `scheme` field to profile HTTP resources. Existing resources
   default to `http`; `ctxa profile add-https` writes `scheme: https`.
 - HTTP bare hosts default to port 80. HTTPS bare hosts default to port 443.
 - `ctxa profile add-https` and `profile test` must treat `api.example.com` and
@@ -45,7 +45,7 @@ agent process -> HTTPS_PROXY -> ctxa local proxy -> profile rule -> secret backe
 - Inject broker-managed bearer auth.
 - Forward to the upstream HTTPS API with normal upstream certificate validation.
 - Do not follow upstream HTTPS redirects inside the broker. Return redirect
-  responses to the child so any follow-up request is evaluated as a new profile
+  responses to the child so each subsequent request is evaluated as a new profile
   proxy request.
 - Do not use ambient proxy environment variables for broker-to-upstream HTTPS
   forwarding.
@@ -61,18 +61,18 @@ agent process -> HTTPS_PROXY -> ctxa local proxy -> profile rule -> secret backe
   presence, and reason.
 - Proposal records must not include raw secrets, request bodies, raw query
   strings, or caller auth headers.
-- Add:
+- Implemented command:
 
 ```text
 ctxa proposals list
 ```
 
-The first implementation lists redacted proposal events from the local audit log
-in newest-first order with `--limit`. It does not mutate policy.
+The command lists redacted proposal events from the local audit log in
+newest-first order with `--limit`. It does not mutate policy.
 
 ### Doctor
 
-Add:
+Implemented commands:
 
 ```text
 ctxa doctor
@@ -97,7 +97,7 @@ denied, and does not resolve secrets or call the upstream API.
 - No browser/runtime-specific assumptions.
 - Existing HTTP proxy behavior must continue to work.
 - Existing `ctxa profile add-http` remains supported.
-- Add `ctxa profile add-https` as an ergonomic alias for HTTPS API resources
+- Added `ctxa profile add-https` as an ergonomic alias for HTTPS API resources
   using the same profile resource model.
 
 ## Tests

@@ -20,13 +20,14 @@ Implemented surfaces:
 - secret backend interface
 - provider/action adapter interface
 - profile-scoped HTTP and HTTPS proxy for `ctxa run`
+- profile-held HTTP grants and grant-backed proxy matching
 - fake providers and deterministic tests
 
 ## Control path
 
 ```text
 Agent runtime
-  -> ctxa CLI / MCP server / local daemon
+  -> ctxa CLI / MCP server
   -> ActionRequest
   -> Policy evaluation
   -> Approval if required
@@ -59,6 +60,8 @@ The skill is documentation plus examples, not a privileged execution surface.
 - `ProviderAdapter`: executor that uses credentials without exposing them to the
   agent.
 - `ProfileResource`: HTTP or HTTPS resource rule for a launched agent process.
+- `Grant`: attenuable HTTP authority that can be delegated without copying the
+  root secret reference into child grants.
 - `AuditEvent`: local event record.
 - `IdempotencyKey`: duplicate-execution guard.
 

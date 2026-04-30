@@ -23,8 +23,30 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn ctxa() -> Command {
-    Command::cargo_bin("ctxa").expect("ctxa binary")
+    let path = assert_cmd::cargo::cargo_bin("ctxa");
+    codesign_ctxa_for_external_target(&path);
+    Command::new(path)
 }
+
+#[cfg(target_os = "macos")]
+fn codesign_ctxa_for_external_target(path: &Path) {
+    static SIGN_ONCE: std::sync::Once = std::sync::Once::new();
+    SIGN_ONCE.call_once(|| {
+        let output = std::process::Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(path)
+            .output()
+            .expect("codesign ctxa test binary");
+        assert!(
+            output.status.success(),
+            "codesign ctxa test binary failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn codesign_ctxa_for_external_target(_path: &Path) {}
 
 fn configure_trusted_agent(home: &Path, policy_fixture: &str) {
     configure_trusted_agent_path(home, &fixture(policy_fixture));
