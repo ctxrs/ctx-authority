@@ -51,13 +51,13 @@ actions, not secret values.
 Request:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"example-client","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"example-client","version":"client-version"}}}
 ```
 
 Response:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ctxa","title":"ctx authority","version":"0.1.0"},"instructions":"Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ctxa","title":"ctx authority","version":"current-version"},"instructions":"Request capabilities, not raw secrets. This server exposes redacted broker metadata, local receipt verification, profile-bound capability grant delegation, and granted provider capability execution."}}
 ```
 
 Tool list request:

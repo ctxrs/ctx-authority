@@ -1,6 +1,8 @@
 use assert_cmd::Command;
+use ctxa::audit::AuditLog;
 use ctxa::backends::SecretBackendConfig;
 use ctxa::config::AppConfig;
+use ctxa::models::Receipt;
 use predicates::prelude::*;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
@@ -910,6 +912,82 @@ fn denied_capability_attempt_is_audited_without_calling_provider() {
 }
 
 #[test]
+fn invalid_capability_operation_fails_before_secret_resolution_and_receipt() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["profile", "create", "agent", "--agent", "agent"])
+        .assert()
+        .success();
+    set_fake_backend(home.path(), BTreeMap::new());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "provider",
+            "add-github",
+            "--id",
+            "github",
+            "--token-ref",
+            "github-token",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "grant",
+            "create",
+            "--id",
+            "github-read",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+        ])
+        .assert()
+        .success();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "execute",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+            "--operation",
+            r#"{"statee":"open"}"#,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("operation key statee"))
+        .stderr(predicate::str::contains("secret").not())
+        .stderr(predicate::str::contains("github-token").not());
+
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let events = audit.list_all().unwrap();
+    let text = serde_json::to_string(&events).unwrap();
+    assert!(text.contains("request_plan_failed"));
+    assert!(!text.contains("capability_receipt"));
+}
+
+#[test]
 fn provider_failure_is_audited_without_leaking_token() {
     let server = FakeServer::start(vec![ExpectedRequest {
         method: "POST",
@@ -1001,4 +1079,18 @@ fn provider_failure_is_audited_without_leaking_token() {
         .stdout(predicate::str::contains("provider_execution_failed"))
         .stdout(predicate::str::contains("gh-secret-token").not())
         .stdout(predicate::str::contains("github-token").not());
+    let audit = AuditLog::open(home.path().join("audit.sqlite3")).unwrap();
+    let receipts = audit.list_all_kind("capability_receipt").unwrap();
+    assert_eq!(receipts.len(), 1);
+    let receipt: Receipt = serde_json::from_value(receipts[0].1.clone()).unwrap();
+    assert_eq!(receipt.execution.status, "ambiguous");
+    assert_eq!(
+        receipt.execution.provider_request_id.as_deref(),
+        Some("gh-fail-1")
+    );
+    assert_eq!(receipt.execution.result["response_status"], 500);
+    assert_eq!(
+        receipt.execution.result["reason"],
+        "provider_execution_failed"
+    );
 }

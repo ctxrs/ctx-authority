@@ -163,7 +163,21 @@ ctxa run --profile github-reader -- my-agent
 ctxa run --profile worker-agent -- worker-agent-command
 ```
 
-The child process receives `HTTP_PROXY`, `HTTPS_PROXY`, common local CA trust variables, `CTXA_PROXY_URL`, `CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP and HTTPS requests through that proxy are checked against the profile, receive broker-managed bearer auth, and produce local audit events plus signed receipt metadata. HTTPS support uses a process-scoped local CA for the launched child process; `ctxa` does not install a CA into the system trust store.
+By default, `ctxa run` is a host-mode cooperative launcher: the child inherits
+the operator's environment like a normal local process, then receives
+`HTTP_PROXY`, `HTTPS_PROXY`, common local CA trust variables, `CTXA_PROXY_URL`,
+`CTXA_PROXY_TOKEN`, and `CTXA_PROFILE`. Supported HTTP and HTTPS requests through
+that proxy are checked against the profile, receive broker-managed bearer auth,
+and produce local audit events plus signed receipt metadata. HTTPS support uses a
+process-scoped local CA for the launched child process; `ctxa` does not install a
+CA into the system trust store.
+
+For stricter environment hygiene, start from a minimal environment and
+explicitly inherit only the variables the agent needs:
+
+```sh
+ctxa run --profile github-reader --clean-env --inherit-env ANTHROPIC_API_KEY -- my-agent
+```
 
 If a profile denies an authenticated request, inspect redacted local proposals:
 
@@ -252,7 +266,7 @@ A configured source for credentials. The broker resolves secrets inside the exec
 
 A loopback proxy created per `ctxa run`. It requires a per-run proxy credential,
 matches HTTP and HTTPS requests to profile resources or profile-held grants,
-strips caller-supplied auth and proxy headers, injects broker-managed bearer
+forwards only a small request-header allowlist, injects broker-managed bearer
 auth, and records redacted audit metadata.
 
 **Receipt**
@@ -286,7 +300,11 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 
 - HTTPS proxying is process-scoped to the launched child process and currently supports HTTP/1.1 clients that honor standard proxy and CA environment variables.
 - `ctxa` does not install or persist a local CA.
-- `ctxa` does not sandbox the child process or stop it from using other local tools.
+- Host-mode `ctxa run` is cooperative. It does not sandbox the child process,
+  block local file access, or stop it from using other local tools.
+- Host-mode `ctxa run` inherits the operator environment by default. Use
+  `--clean-env` and `--inherit-env <KEY>` when you want the profile plus explicit
+  env keys to describe the launched process authority more closely.
 - Grant mutation commands modify local config and are not a sandbox boundary against local processes with write access to `CTXA_HOME`.
 - Secret backends protect the supported broker path; `.env` files remain readable by any process with filesystem access.
 - CLI-backed secret backends use the user's existing provider CLI login/session and may be subject to provider-side audit logs for secret identifiers.

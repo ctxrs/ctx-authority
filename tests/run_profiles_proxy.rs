@@ -246,6 +246,7 @@ fn run_injects_proxy_environment_without_backend_secret() {
 
     ctxa()
         .env("CTXA_HOME", home.path())
+        .env("CTXA_AMBIENT_ALLOWED", "ambient-value")
         .args(["run", "--profile", "demo", "--", "env"])
         .assert()
         .success()
@@ -259,7 +260,57 @@ fn run_injects_proxy_environment_without_backend_secret() {
         .stdout(predicate::str::contains(
             "GITHUB_API_BASE=http://api.github.com",
         ))
+        .stdout(predicate::str::contains(
+            "CTXA_AMBIENT_ALLOWED=ambient-value",
+        ))
         .stdout(predicate::str::contains("run-hidden-value").not());
+}
+
+#[test]
+fn run_clean_env_drops_ambient_env_and_allows_explicit_inherit() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    let config = AppConfig {
+        profiles: vec![ProfileConfig {
+            id: "demo".into(),
+            agent: Some("my-agent".into()),
+            env_vars: BTreeMap::from([("PROFILE_HINT".into(), "profile-value".into())]),
+            http_resources: Vec::new(),
+        }],
+        secret_backend: Some(SecretBackendConfig::Fake {
+            values: BTreeMap::new(),
+        }),
+        ..AppConfig::default()
+    };
+    config.save(&home.path().join("config.yaml")).unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .env("CTXA_AMBIENT_SECRET", "ambient-value")
+        .env("CTXA_ALLOWED_MODEL_KEY", "model-value")
+        .args([
+            "run",
+            "--profile",
+            "demo",
+            "--clean-env",
+            "--inherit-env",
+            "CTXA_ALLOWED_MODEL_KEY",
+            "--",
+            "env",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CTXA_PROFILE=demo"))
+        .stdout(predicate::str::contains("PROFILE_HINT=profile-value"))
+        .stdout(predicate::str::contains(
+            "CTXA_ALLOWED_MODEL_KEY=model-value",
+        ))
+        .stdout(predicate::str::contains("CTXA_AMBIENT_SECRET").not())
+        .stdout(predicate::str::contains("ambient-value").not());
 }
 
 #[test]
@@ -384,7 +435,7 @@ fn proxy_allows_configured_http_request_and_records_verifiable_receipt() {
     let response = send_proxy_request(
         proxy.address(),
         &format!(
-            "GET http://{}/safe/item?api_key=raw-query-value HTTP/1.1\r\nHost: attacker.invalid\r\nProxy-Authorization: Bearer {}\r\nAuthorization: Bearer caller-token\r\nProxy-Connection: keep-alive\r\n\r\n",
+            "GET http://{}/safe/item?api_key=raw-query-value HTTP/1.1\r\nHost: attacker.invalid\r\nProxy-Authorization: Bearer {}\r\nAuthorization: Bearer caller-token\r\nProxy-Connection: keep-alive\r\nX-HTTP-Method-Override: DELETE\r\nX-GitHub-Api-Version: attacker\r\n\r\n",
             upstream_address,
             proxy.token()
         ),
@@ -402,6 +453,8 @@ fn proxy_allows_configured_http_request_and_records_verifiable_receipt() {
     );
     assert_eq!(header(&received.headers, "proxy-authorization"), None);
     assert_eq!(header(&received.headers, "proxy-connection"), None);
+    assert_eq!(header(&received.headers, "x-http-method-override"), None);
+    assert_eq!(header(&received.headers, "x-github-api-version"), None);
     let expected_host = upstream_address.to_string();
     assert_eq!(
         header(&received.headers, "host"),
@@ -465,6 +518,8 @@ fn proxy_allows_configured_https_request_and_records_verifiable_receipt() {
             "https://{upstream_address}/safe/item?api_key=raw-query-value"
         ))
         .header("Authorization", "Bearer caller-token")
+        .header("X-HTTP-Method-Override", "DELETE")
+        .header("X-GitHub-Api-Version", "attacker")
         .send()
         .unwrap();
     assert_eq!(response.status(), 200);
@@ -480,6 +535,8 @@ fn proxy_allows_configured_https_request_and_records_verifiable_receipt() {
         Some("Bearer https-backend-value")
     );
     assert_eq!(header(&received.headers, "proxy-authorization"), None);
+    assert_eq!(header(&received.headers, "x-http-method-override"), None);
+    assert_eq!(header(&received.headers, "x-github-api-version"), None);
 
     let events = audit.list(20).unwrap();
     let events_text = serde_json::to_string(&events).unwrap();
@@ -1246,7 +1303,8 @@ fn proxy_rejects_header_unsafe_bearer_secrets() {
     assert!(response.starts_with("HTTP/1.1 502"), "{response}");
     let events_text = serde_json::to_string(&audit.list(20).unwrap()).unwrap();
     assert!(!events_text.contains("X-Leak"));
-    assert!(!events_text.contains("bad"));
+    assert!(!events_text.contains("bad\\r\\nX-Leak"));
+    assert!(!events_text.contains("bad\r\nX-Leak"));
     proxy.stop();
 }
 

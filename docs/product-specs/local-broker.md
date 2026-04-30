@@ -68,7 +68,12 @@ ctxa receipts verify receipt.json
 ctxa mcp serve
 ```
 
-`run` is the ergonomic surface for launching an agent under a profile. It starts a loopback profile proxy bound to `127.0.0.1` on an ephemeral port, injects proxy env vars, passes stdio through, stops the proxy after child exit, and returns the child exit code.
+`run` is the ergonomic surface for launching an agent under a profile. It starts
+a loopback profile proxy bound to `127.0.0.1` on an ephemeral port, injects
+proxy env vars, passes stdio through, stops the proxy after child exit, and
+returns the child exit code. Host mode inherits the operator environment by
+default; `--clean-env` starts from a minimal environment plus explicit
+`--inherit-env` keys.
 
 `policy check` is a diagnostic surface and may take an explicit policy path. `action request` is an execution surface and uses the trusted policy attached to the configured local agent profile; agents cannot supply policy paths at execution time.
 

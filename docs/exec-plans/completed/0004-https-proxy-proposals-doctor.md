@@ -42,7 +42,7 @@ agent process -> HTTPS_PROXY -> ctxa local proxy -> profile rule -> secret backe
   request authority. Origin-form requests use the CONNECT host as authority.
 - Resolve the configured secret only after proxy auth, CONNECT target validation,
   TLS handshake, and profile rule matching.
-- Strip caller-supplied auth/proxy/hop-by-hop headers.
+- Forward only the request-header allowlist and inject broker-managed auth.
 - Inject broker-managed bearer auth.
 - Forward to the upstream HTTPS API with normal upstream certificate validation.
 - Do not follow upstream HTTPS redirects inside the broker. Return redirect

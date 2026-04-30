@@ -358,15 +358,23 @@ fn contains_encoded_slash_or_backslash(path: &str) -> bool {
     })
 }
 
+fn contains_encoded_semicolon(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.windows(3).any(|window| {
+        window[0] == b'%' && matches!(window[1], b'3') && matches!(window[2], b'b' | b'B')
+    })
+}
+
 fn is_safe_http_path_prefix(path: &str) -> bool {
     is_safe_http_path(path) && path != "/" && !path.ends_with('/')
 }
 
 fn has_unsafe_http_path_chars_or_segments(path: &str) -> bool {
     path.bytes()
-        .any(|byte| byte.is_ascii_control() || matches!(byte, b'\\' | b'?' | b'#'))
+        .any(|byte| byte.is_ascii_control() || matches!(byte, b'\\' | b'?' | b'#' | b';'))
         || path.contains("//")
         || contains_encoded_slash_or_backslash(path)
+        || contains_encoded_semicolon(path)
         || path
             .split('/')
             .any(|segment| segment == "." || segment == "..")
@@ -682,6 +690,14 @@ grants:
         ));
         assert!(!http_path_matches_prefix(
             "/repos/example/repo/issues/%255cadmin",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/..;/settings",
+            prefix
+        ));
+        assert!(!http_path_matches_prefix(
+            "/repos/example/repo/issues/%2e%2e%3b/settings",
             prefix
         ));
         assert!(!http_path_matches_prefix(

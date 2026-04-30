@@ -113,7 +113,6 @@ ctxa capability grant create \
   --capability github.issues.read \
   --capability github.issues.create \
   --resource github:example-org/example-repo \
-  --payload-equals label='"bug"' \
   --delegable \
   --max-depth 2
 ```
@@ -159,16 +158,19 @@ receipt result by default.
 
 ## Execution rule
 
-Provider execution must happen only after a matching capability grant is found.
-Denied actions must not call the adapter. Operation objects fail closed when
-they contain keys that the selected capability does not support. Provider
-requests ignore ambient proxy environment variables, do not follow redirects,
-use a finite request timeout, cap response bodies, and preserve any path prefix
-configured in `api_base` for gateways such as GitHub Enterprise.
+Provider execution must happen only after a matching capability grant is found
+and the provider operation is locally planned. Denied actions and locally invalid
+operation objects must not resolve provider credentials or call the adapter.
+Operation objects fail closed when they contain keys that the selected
+capability does not support. Provider requests ignore ambient proxy environment
+variables, do not follow redirects, use a finite request timeout, cap response
+bodies, and preserve any path prefix configured in `api_base` for gateways such
+as GitHub Enterprise.
 
 If provider execution fails after a lease is issued, the broker records an
 `ambiguous` signed receipt best-effort because a side-effecting provider request
-may have reached the upstream service before the local failure surfaced.
+may have reached the upstream service before the local failure surfaced. When an
+upstream status or provider request id is known, the receipt includes it.
 
 All tests use local fake provider servers. The default test suite must not
 depend on real provider credentials, external provider network access, or human

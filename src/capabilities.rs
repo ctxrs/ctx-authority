@@ -95,6 +95,38 @@ pub struct CapabilityProviderResponse {
     pub body: Value,
 }
 
+#[derive(Debug)]
+struct CapabilityProviderFailure {
+    error: AuthorityError,
+    provider_request_id: Option<String>,
+    status: Option<StatusCode>,
+    upstream_attempted: bool,
+}
+
+impl CapabilityProviderFailure {
+    fn before_upstream(error: AuthorityError) -> Self {
+        Self {
+            error,
+            provider_request_id: None,
+            status: None,
+            upstream_attempted: false,
+        }
+    }
+
+    fn after_upstream(
+        error: AuthorityError,
+        provider_request_id: Option<String>,
+        status: Option<StatusCode>,
+    ) -> Self {
+        Self {
+            error,
+            provider_request_id,
+            status,
+            upstream_attempted: true,
+        }
+    }
+}
+
 pub fn execute_capability(
     profiles: &[ProfileConfig],
     grants: &[CapabilityGrantConfig],
@@ -134,6 +166,23 @@ pub fn execute_capability(
             )));
         }
     };
+    let issuer = ProviderCapabilityIssuer::new(provider.clone())?;
+    let planned = match issuer.plan_execution(&request) {
+        Ok(planned) => planned,
+        Err(err) => {
+            audit.record(
+                "capability_execution_failed",
+                &capability_audit_data(
+                    profile,
+                    provider,
+                    &request,
+                    Some(&matched.grant.id),
+                    "request_plan_failed",
+                ),
+            )?;
+            return Err(err);
+        }
+    };
     audit.record(
         "capability_execution_attempted",
         &capability_audit_data(
@@ -145,7 +194,6 @@ pub fn execute_capability(
         ),
     )?;
 
-    let issuer = ProviderCapabilityIssuer::new(provider.clone())?;
     let lease = match issuer.issue_lease(&request, backend) {
         Ok(lease) => lease,
         Err(err) => {
@@ -170,9 +218,9 @@ pub fn execute_capability(
         lease: &lease,
         signer,
     };
-    let provider_response = match issuer.execute(&request, &lease) {
+    let provider_response = match issuer.execute_planned(&lease, planned) {
         Ok(response) => response,
-        Err(err) => {
+        Err(failure) => {
             audit.record(
                 "capability_execution_failed",
                 &capability_audit_data(
@@ -183,14 +231,19 @@ pub fn execute_capability(
                     "provider_execution_failed",
                 ),
             )?;
-            if let Ok(receipt) =
-                issue_capability_failure_receipt(&receipt_context, "provider_execution_failed")
-            {
-                if let Ok(value) = serde_json::to_value(&receipt) {
-                    let _ = audit.record("capability_receipt", &value);
+            if failure.upstream_attempted {
+                let details = CapabilityFailureReceiptDetails {
+                    reason: "provider_execution_failed",
+                    provider_request_id: failure.provider_request_id.clone(),
+                    status: failure.status,
+                };
+                if let Ok(receipt) = issue_capability_failure_receipt(&receipt_context, &details) {
+                    if let Ok(value) = serde_json::to_value(&receipt) {
+                        let _ = audit.record("capability_receipt", &value);
+                    }
                 }
             }
-            return Err(err);
+            return Err(failure.error);
         }
     };
     let receipt = issue_capability_receipt(&receipt_context, &provider_response)?;
@@ -543,6 +596,33 @@ impl ProviderCapabilityIssuer {
             client,
         })
     }
+
+    fn plan_execution(
+        &self,
+        request: &CapabilityExecuteRequest,
+    ) -> Result<PlannedProviderExecution> {
+        Ok(PlannedProviderExecution {
+            api_base: api_base_for_capability(
+                self.provider.kind,
+                &request.capability,
+                &self.api_base,
+            )?,
+            request: plan_provider_request(self.provider.kind, request)?,
+        })
+    }
+
+    fn execute_planned(
+        &self,
+        lease: &CapabilityLease,
+        planned: PlannedProviderExecution,
+    ) -> std::result::Result<CapabilityProviderResponse, CapabilityProviderFailure> {
+        let mut response =
+            execute_provider_http(&self.client, &planned.api_base, lease, planned.request)?;
+        if lease.capability == "github.issues.read" {
+            response.body = filter_github_issue_response(response.body);
+        }
+        Ok(response)
+    }
 }
 
 impl CapabilityIssuer for ProviderCapabilityIssuer {
@@ -631,15 +711,16 @@ impl CapabilityIssuer for ProviderCapabilityIssuer {
         request: &CapabilityExecuteRequest,
         lease: &CapabilityLease,
     ) -> Result<CapabilityProviderResponse> {
-        let planned = plan_provider_request(self.provider.kind, request)?;
-        let api_base =
-            api_base_for_capability(self.provider.kind, &request.capability, &self.api_base)?;
-        let mut response = execute_provider_http(&self.client, &api_base, lease, planned)?;
-        if request.capability == "github.issues.read" {
-            response.body = filter_github_issue_response(response.body);
-        }
-        Ok(response)
+        let planned = self.plan_execution(request)?;
+        self.execute_planned(lease, planned)
+            .map_err(|failure| failure.error)
     }
+}
+
+#[derive(Debug, Clone)]
+struct PlannedProviderExecution {
+    api_base: Url,
+    request: PlannedProviderRequest,
 }
 
 #[derive(Debug, Clone)]
@@ -655,8 +736,9 @@ fn execute_provider_http(
     api_base: &Url,
     lease: &CapabilityLease,
     planned: PlannedProviderRequest,
-) -> Result<CapabilityProviderResponse> {
-    let mut url = join_provider_url(api_base, &planned.path)?;
+) -> std::result::Result<CapabilityProviderResponse, CapabilityProviderFailure> {
+    let mut url = join_provider_url(api_base, &planned.path)
+        .map_err(CapabilityProviderFailure::before_upstream)?;
     if !planned.query.is_empty() {
         let mut pairs = url.query_pairs_mut();
         for (key, value) in planned.query {
@@ -671,16 +753,24 @@ fn execute_provider_http(
     if let Some(body) = planned.body {
         request = request.json(&body);
     }
-    let response = request
-        .send()
-        .map_err(|err| AuthorityError::Provider(format!("provider request failed: {err}")))?;
+    let response = request.send().map_err(|err| {
+        CapabilityProviderFailure::after_upstream(
+            AuthorityError::Provider(format!("provider request failed: {err}")),
+            None,
+            None,
+        )
+    })?;
     let status = response.status();
     let provider_request_id = provider_request_id(response.headers());
-    let text = read_provider_response_text(response)?;
+    let text = read_provider_response_text(response).map_err(|err| {
+        CapabilityProviderFailure::after_upstream(err, provider_request_id.clone(), Some(status))
+    })?;
     if !status.is_success() {
-        return Err(AuthorityError::Provider(format!(
-            "provider returned HTTP {status}"
-        )));
+        return Err(CapabilityProviderFailure::after_upstream(
+            AuthorityError::Provider(format!("provider returned HTTP {status}")),
+            provider_request_id.clone(),
+            Some(status),
+        ));
     }
     let body = if text.trim().is_empty() {
         Value::Null
@@ -729,6 +819,7 @@ fn api_base_for_capability(
 fn is_default_google_api_base(url: &Url) -> bool {
     url.scheme() == "https"
         && url.host_str() == Some("www.googleapis.com")
+        && url.port_or_known_default() == Some(443)
         && matches!(url.path(), "" | "/")
 }
 
@@ -996,6 +1087,12 @@ struct CapabilityReceiptContext<'a> {
     signer: &'a ReceiptSigner,
 }
 
+struct CapabilityFailureReceiptDetails {
+    reason: &'static str,
+    provider_request_id: Option<String>,
+    status: Option<StatusCode>,
+}
+
 fn issue_capability_receipt(
     context: &CapabilityReceiptContext<'_>,
     response: &CapabilityProviderResponse,
@@ -1012,11 +1109,19 @@ fn issue_capability_receipt(
 
 fn issue_capability_failure_receipt(
     context: &CapabilityReceiptContext<'_>,
-    reason: &str,
+    details: &CapabilityFailureReceiptDetails,
 ) -> Result<Receipt> {
     let mut result = base_capability_receipt_result(context)?;
-    result.insert("reason".into(), json!(reason));
-    issue_capability_receipt_with_result(context, "ambiguous", None, result)
+    result.insert("reason".into(), json!(details.reason));
+    if let Some(status) = details.status {
+        result.insert("response_status".into(), json!(status.as_u16()));
+    }
+    issue_capability_receipt_with_result(
+        context,
+        "ambiguous",
+        details.provider_request_id.clone(),
+        result,
+    )
 }
 
 fn issue_capability_receipt_with_result(
@@ -1527,6 +1632,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(url.as_str(), "https://gateway.example.com/google");
+
+        let custom_port = Url::parse("https://www.googleapis.com:8443").unwrap();
+        let url = api_base_for_capability(
+            CapabilityProviderKind::Google,
+            "google.docs.documents.read",
+            &custom_port,
+        )
+        .unwrap();
+        assert_eq!(url.as_str(), "https://www.googleapis.com:8443/");
     }
 
     #[test]

@@ -23,14 +23,19 @@ The skill teaches:
 
 ## MCP guidance
 
-The skill describes `ctxa mcp serve` as a stdio MCP server with a minimal tool
-surface:
+The skill describes `ctxa mcp serve` as a stdio MCP server with these local
+tools:
 
 - `capabilities.list` lists available MCP tools and broker capabilities.
 - `receipts.verify` accepts either `receipt` as an object or `receipt_json` as a
   string and verifies the receipt against the local ctx authority signing key.
+- `capability.grants.list` and `capability.grants.show` inspect grants held by
+  the bound profile.
+- `capability.grants.delegate` can create a mechanically narrower child grant.
+- `capability.execute` can execute granted provider capabilities.
 
-MCP support is limited to the tools listed above.
+Grant mutation and execution require `CTXA_PROFILE` or `CTXA_MCP_PROFILE` and
+are constrained to the bound profile.
 
 ## Run profile guidance
 

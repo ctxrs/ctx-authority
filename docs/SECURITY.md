@@ -25,6 +25,7 @@ Constrain how agents use capabilities without handing them durable credentials.
 - Preventing malware on the same machine from reading local files.
 - Protecting secrets after they are intentionally sent to a provider.
 - Sandboxing a child process launched by `ctxa run`.
+- Removing authority an already-running local agent has outside `ctxa`.
 - System-wide TLS interception or persistent local CA installation.
 - Solving risks for capability domains outside this local broker.
 
@@ -36,14 +37,19 @@ Constrain how agents use capabilities without handing them durable credentials.
 For run profiles, the supported claim is narrower:
 
 > For supported profile proxy requests, `ctxa` resolves credentials only after
-> proxy authorization and profile matching, strips caller-supplied auth headers,
-> injects broker-managed bearer auth, and keeps raw secret values out of local
-> audit and receipt output.
+> proxy authorization and profile matching, forwards only a small request-header
+> allowlist, injects broker-managed bearer auth, and keeps raw secret values out
+> of local audit and receipt output.
 
 For supported HTTPS profile resources, this guarantee applies inside a
 process-scoped `CONNECT` tunnel created for the launched child process. The
 per-run CA private key remains in memory, and only the CA certificate is exposed
 to the child through temporary trust configuration.
+
+Host-mode `ctxa run` inherits the operator environment by default, matching
+normal local process-launcher behavior. Use `--clean-env` with explicit
+`--inherit-env` keys when the launched process should receive only a minimal
+baseline environment plus profile/proxy variables.
 
 Hand-written profile resources default to HTTPS when the `scheme` field is
 omitted. Use `ctxa profile add-http` or `ctxa grants create-http` only for

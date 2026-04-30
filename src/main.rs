@@ -93,6 +93,10 @@ enum Command {
     Run {
         #[arg(long)]
         profile: String,
+        #[arg(long)]
+        clean_env: bool,
+        #[arg(long = "inherit-env")]
+        inherit_env: Vec<String>,
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
@@ -489,7 +493,19 @@ fn main() -> anyhow::Result<()> {
         Command::Ca { command } => ca(command),
         Command::Doctor { profile } => doctor(profile),
         Command::Action { command } => action(command),
-        Command::Run { profile, command } => run(profile, command),
+        Command::Run {
+            profile,
+            clean_env,
+            inherit_env,
+            command,
+        } => run(
+            RunOptions {
+                profile,
+                clean_env,
+                inherit_env,
+            },
+            command,
+        ),
         Command::Receipts { command } => receipts(command),
         Command::Log { limit } => log(limit),
         Command::Mcp { command } => mcp(command),
@@ -1164,10 +1180,22 @@ fn capability_provider_kind_name(kind: CapabilityProviderKind) -> &'static str {
     }
 }
 
-fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
+struct RunOptions {
+    profile: String,
+    clean_env: bool,
+    inherit_env: Vec<String>,
+}
+
+fn run(options: RunOptions, command: Vec<String>) -> anyhow::Result<()> {
     if command.is_empty() {
         anyhow::bail!("run requires a command");
     }
+    let RunOptions {
+        profile: profile_id,
+        clean_env,
+        inherit_env,
+    } = options;
+    validate_inherit_env_keys(&inherit_env)?;
     let paths = AppPaths::discover()?;
     paths.ensure()?;
     let config = AppConfig::load(&paths.config_file)?;
@@ -1195,31 +1223,97 @@ fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
     let ca_cert_path = proxy.ca_cert_path().to_path_buf();
     let mut child = ProcessCommand::new(&command[0]);
     child.args(&command[1..]);
-    for (key, value) in &profile.env_vars {
-        child.env(key, value);
-    }
-    child
-        .env("CTXA_PROFILE", &profile.id)
-        .env("CTXA_PROXY_URL", &proxy_url)
-        .env("CTXA_PROXY_TOKEN", proxy.token())
-        .env("HTTP_PROXY", &proxy_url)
-        .env("http_proxy", &proxy_url)
-        .env("HTTPS_PROXY", &proxy_url)
-        .env("https_proxy", &proxy_url)
-        .env("SSL_CERT_FILE", &ca_cert_path)
-        .env("REQUESTS_CA_BUNDLE", &ca_cert_path)
-        .env("CURL_CA_BUNDLE", &ca_cert_path)
-        .env("NODE_EXTRA_CA_CERTS", &ca_cert_path)
-        .env("GIT_SSL_CAINFO", &ca_cert_path)
-        .env("NO_PROXY", "")
-        .env("no_proxy", "")
-        .env_remove("ALL_PROXY")
-        .env_remove("all_proxy");
+    apply_run_environment(
+        &mut child,
+        &profile,
+        &proxy_url,
+        proxy.token(),
+        &ca_cert_path,
+        &inherit_env,
+        clean_env,
+    );
     let status = child
         .status()
         .with_context(|| format!("failed to run {}", command[0]))?;
     proxy.stop();
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn apply_run_environment(
+    child: &mut ProcessCommand,
+    profile: &ProfileConfig,
+    proxy_url: &str,
+    proxy_token: &str,
+    ca_cert_path: &std::path::Path,
+    inherit_env: &[String],
+    clean_env: bool,
+) {
+    if clean_env {
+        child.env_clear();
+        for key in baseline_run_env_keys() {
+            if let Some(value) = std::env::var_os(&key) {
+                child.env(key, value);
+            }
+        }
+    }
+    for key in inherit_env {
+        if let Some(value) = std::env::var_os(key) {
+            child.env(key, value);
+        }
+    }
+    for (key, value) in &profile.env_vars {
+        child.env(key, value);
+    }
+    child
+        .env("CTXA_PROFILE", &profile.id)
+        .env("CTXA_PROXY_URL", proxy_url)
+        .env("CTXA_PROXY_TOKEN", proxy_token)
+        .env("HTTP_PROXY", proxy_url)
+        .env("http_proxy", proxy_url)
+        .env("HTTPS_PROXY", proxy_url)
+        .env("https_proxy", proxy_url)
+        .env("SSL_CERT_FILE", ca_cert_path)
+        .env("REQUESTS_CA_BUNDLE", ca_cert_path)
+        .env("CURL_CA_BUNDLE", ca_cert_path)
+        .env("NODE_EXTRA_CA_CERTS", ca_cert_path)
+        .env("GIT_SSL_CAINFO", ca_cert_path)
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy");
+}
+
+fn baseline_run_env_keys() -> Vec<String> {
+    let mut keys = vec![
+        "PATH".to_string(),
+        "HOME".to_string(),
+        "USER".to_string(),
+        "LOGNAME".to_string(),
+        "SHELL".to_string(),
+        "TERM".to_string(),
+        "LANG".to_string(),
+        "TMPDIR".to_string(),
+    ];
+    keys.extend(
+        std::env::vars()
+            .map(|(key, _)| key)
+            .filter(|key| key == "LC_ALL" || key.starts_with("LC_")),
+    );
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn validate_inherit_env_keys(keys: &[String]) -> anyhow::Result<()> {
+    for key in keys {
+        if key.is_empty()
+            || key.contains('=')
+            || key.bytes().any(|byte| byte == 0 || byte.is_ascii_control())
+        {
+            anyhow::bail!("invalid inherit-env key {key}");
+        }
+    }
+    Ok(())
 }
 
 fn doctor(profile: Option<String>) -> anyhow::Result<()> {

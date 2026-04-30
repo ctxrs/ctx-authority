@@ -69,8 +69,6 @@ A grant is safe only when it is specific:
 - named capability
 - named resource
 - narrow method/host/path/recipient constraints
-- optional expiry
-- optional rate limit
 
 Broad grants are avoided in examples.
 For v1, `http.request` grants are invalid unless `methods`, `hosts`, and
@@ -79,6 +77,8 @@ act as implicit wildcards. The `http.request` operation object may contain only
 `method`, `host`, and `path`.
 HTTP grants must not specify email-only allow dimensions such as
 `recipient_domains`.
+The v1 schema does not accept expiry or rate-limit fields; grants must be narrow
+enough to be safe without those controls.
 
 For v1, `email.send` grants are invalid unless `recipient_domains` is present
 and non-empty. Recipient matching is exact and case-insensitive on the domain

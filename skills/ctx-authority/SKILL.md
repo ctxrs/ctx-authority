@@ -14,6 +14,7 @@ Request capabilities, not secrets.
 
 ```bash
 ctxa run --profile <profile-id> -- <agent-or-tool-command>
+ctxa run --profile <profile-id> --clean-env --inherit-env <KEY> -- <agent-or-tool-command>
 ctxa profile test <profile-id> --url <url> [--method <METHOD>]
 ctxa doctor --profile <profile-id>
 ctxa grants list [--profile <profile-id>]
@@ -37,6 +38,10 @@ ctxa mcp serve
 If you are already running inside `ctxa run`, use the provided `HTTP_PROXY`,
 `HTTPS_PROXY`, or `CTXA_PROXY_URL` for supported API calls. Do not ask for the
 underlying API token. Do not replace the proxy-managed `Authorization` header.
+
+Host-mode `ctxa run` inherits the operator environment by default. When launched
+with `--clean-env`, assume only profile/proxy variables and explicitly inherited
+keys are available.
 
 `ctxa action request` uses the human-configured trusted policy and agent profile
 from local broker config. Do not supply your own policy path for execution.

@@ -95,7 +95,7 @@ fn handle_initialize(id: Value, message: &Value) -> Value {
                 "title": "ctx authority",
                 "version": env!("CARGO_PKG_VERSION")
             },
-            "instructions": "Request capabilities, not raw secrets. This server exposes only redacted broker metadata and receipt verification helpers."
+            "instructions": "Request capabilities, not raw secrets. This server exposes redacted broker metadata, local receipt verification, profile-bound capability grant delegation, and granted provider capability execution."
         }),
     )
 }

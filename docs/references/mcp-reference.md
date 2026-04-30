@@ -22,7 +22,8 @@ reference is version-pinned separately.
 - `tools/list` returns tools in deterministic order.
 - `tools/call` uses MCP `CallToolResult` responses. Tool-level failures return
   `isError: true`; malformed JSON-RPC requests use JSON-RPC error objects.
-- Metadata and receipt-structure tools are stateless.
+- Metadata tools are stateless. `receipts.verify` loads the local signing key to
+  perform Ed25519 verification.
 - Capability grant tools load local config and may mutate it when explicitly
   delegating a narrower child grant.
 - Capability execution loads local config, the configured secret backend, audit

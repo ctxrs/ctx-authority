@@ -10,7 +10,11 @@ Agents often need API credentials to do useful work. Putting those credentials i
 
 ## Core behavior
 
-`ctxa run --profile <id> -- <command>` starts a local loopback profile proxy, injects proxy environment variables into the child process, and runs the command. Requests sent through the proxy are allowed only when they match the selected profile.
+`ctxa run --profile <id> -- <command>` starts a local loopback profile proxy, injects proxy environment variables into the child process, and runs the command. Requests sent through the proxy are allowed only when they match the selected profile. By default this is host mode: the child inherits the operator environment like a normal local process.
+
+`ctxa run --clean-env --profile <id> -- <command>` starts from a minimal
+environment instead. Add `--inherit-env <KEY>` for any explicit variables the
+agent needs, such as a model-provider API key.
 
 The child receives:
 
@@ -153,7 +157,10 @@ grant:
 - configured method
 - configured path prefix at a segment boundary
 
-The proxy rejects malformed or ambiguous targets, userinfo, fragments, unsupported IPv6 syntax, dot segments, encoded traversal, encoded slashes, encoded backslashes, repeated slashes, and unsafe query syntax.
+The proxy rejects malformed or ambiguous targets, userinfo, fragments,
+unsupported IPv6 syntax, dot segments, semicolon/matrix-parameter path variants,
+encoded traversal, encoded slashes, encoded backslashes, encoded semicolons,
+repeated slashes, and unsafe query syntax.
 
 Query strings may be forwarded to the upstream API, but raw query strings are not written to audit events or receipts.
 
@@ -185,7 +192,11 @@ the same segment-boundary rules as manually configured profile resources.
 
 ## Header handling
 
-Before forwarding, the proxy strips caller-supplied auth, proxy, and hop-by-hop headers, then injects:
+Before forwarding, the proxy uses a small request-header allowlist and drops
+caller-supplied auth, proxy, hop-by-hop, method-override, impersonation, tenant,
+and provider-control headers. Allowed forwarded headers are currently
+`Accept`, `Accept-Encoding`, `Accept-Language`, `Content-Type`, and
+`User-Agent`. The proxy then injects:
 
 ```text
 Authorization: Bearer <resolved-secret>
@@ -214,6 +225,8 @@ Denied, malformed, unauthenticated, and upstream-failed requests write redacted 
 ## Limits
 
 - This is not a process sandbox.
+- Host mode inherits the operator environment by default. Use `--clean-env` when
+  that is not desirable.
 - HTTPS support is process-scoped to the launched child process and depends on clients honoring standard proxy and CA environment variables.
 - The proxy supports HTTP/1.1 proxy traffic.
 - Request headers, request bodies, upstream responses, and concurrent requests are capped.

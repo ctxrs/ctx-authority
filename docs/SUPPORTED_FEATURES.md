@@ -8,7 +8,7 @@ repository.
 | Area | Support | Notes |
 | --- | --- | --- |
 | CLI | Implemented | Core init/profile/run/agent/policy/action/log/receipt commands are implemented. |
-| Run profiles | Implemented | `ctxa run` starts a loopback proxy for scoped HTTP and HTTPS profile resources. HTTPS support is process-scoped to the launched child process. |
+| Run profiles | Implemented | `ctxa run` starts a host-mode loopback proxy for scoped HTTP and HTTPS profile resources. `--clean-env` is available for stricter child environment hygiene. HTTPS support is process-scoped to the launched child process. |
 | Grants | Implemented | HTTP grants can be delegated into mechanically narrower child grants. Grant-backed proxy requests resolve the root secret internally and emit receipts with redacted grant-chain metadata. |
 | MCP server | Implemented | Initialize, ping, tool list, capabilities, local Ed25519 receipt verification, capability grant inspection/delegation, and capability execution are implemented. |
 | Policy engine | Implemented | YAML allow/deny/approval decisions use strict field and version validation. |

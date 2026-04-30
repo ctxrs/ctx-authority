@@ -1211,7 +1211,7 @@ fn forward_plain_http_request(
     )
     .map_err(|_| UpstreamFailure::new(502, "Bad Gateway", "failed to build upstream request"))?;
     for (name, value) in &request.headers {
-        if should_strip_header(name) {
+        if !should_forward_request_header(name) {
             continue;
         }
         write!(upstream_request, "{name}: {value}\r\n").map_err(|_| {
@@ -1293,7 +1293,7 @@ fn forward_https_request(
         .bearer_auth(bearer)
         .body(request.body.clone());
     for (name, value) in &request.headers {
-        if should_strip_header(name) {
+        if !should_forward_request_header(name) {
             continue;
         }
         request_builder = request_builder.header(name.as_str(), value.as_str());
@@ -1360,23 +1360,16 @@ fn validate_bearer_secret(bearer: &str) -> std::result::Result<(), UpstreamFailu
     Ok(())
 }
 
-fn should_strip_header(name: &str) -> bool {
+fn should_forward_request_header(name: &str) -> bool {
     [
-        "authorization",
-        "connection",
-        "content-length",
-        "host",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "proxy-connection",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "content-type",
+        "user-agent",
     ]
     .iter()
-    .any(|strip| name.eq_ignore_ascii_case(strip))
+    .any(|allowed| name.eq_ignore_ascii_case(allowed))
 }
 
 fn should_strip_response_header(name: &str) -> bool {
