@@ -73,6 +73,10 @@ secret_backend:
   type: one-password
 ```
 
+Other local secret backends can use existing CLI sessions for Bitwarden Secrets
+Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM
+Parameter Store, GCP Secret Manager, Azure Key Vault, and SOPS-encrypted files.
+
 Add an HTTPS resource to the profile:
 
 ```sh
@@ -232,7 +236,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - local receipt list/show/verify workflow
 - structural MCP receipt verification
 - pluggable secret backend interface
-- `.env`, OS keychain, 1Password CLI, and test backends
+- `.env`, OS keychain, 1Password CLI, Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, SOPS, trusted local command, and test backends
 
 ## Limits
 
@@ -241,6 +245,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - `ctxa` does not sandbox the child process or stop it from using other local tools.
 - Grant mutation commands modify local config and are not a sandbox boundary against local processes with write access to `CTXA_HOME`.
 - Secret backends protect the supported broker path; `.env` files remain readable by any process with filesystem access.
+- CLI-backed secret backends use the user's existing provider CLI login/session and may be subject to provider-side audit logs for secret identifiers.
 - Receipts and audit events are local artifacts unless you move or publish them yourself.
 
 ## MCP

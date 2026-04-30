@@ -12,7 +12,7 @@ repository.
 | Grants | Implemented | HTTP grants can be delegated into mechanically narrower child grants. Grant-backed proxy requests resolve the root secret internally and emit receipts with redacted grant-chain metadata. |
 | MCP server | Implemented | Initialize, ping, tool list, capabilities, and structural receipt verification are implemented. |
 | Policy engine | Implemented | YAML allow/deny/approval decisions use strict field and version validation. |
-| Secret backends | Implemented | Fake, `.env`, OS keychain abstraction, and 1Password adapter are implemented. |
+| Secret backends | Implemented | Fake, `.env`, OS keychain abstraction, 1Password, Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, SOPS, and trusted local command adapters are implemented. |
 | Provider adapters | Implemented | Fake provider adapter and profile proxy execution path are implemented. |
 | Proposals | Implemented | Authenticated profile-proxy denials record redacted local proposal events that can be shown, applied, or dismissed. |
 | Diagnostics | Implemented | `ctxa doctor`, `ctxa ca status`, and `ctxa profile test` are implemented. |

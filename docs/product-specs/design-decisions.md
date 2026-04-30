@@ -22,17 +22,22 @@ and receipt records.
 
 ## Secret backends
 
-The initial backend set is:
+The backend set is:
 
 - fake backend for tests
 - `.env`
 - OS keychain through the platform credential store
 - 1Password through `op read`
+- Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets
+  Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, and
+  SOPS through local provider CLIs
+- trusted local command backend for local escape-hatch integrations
 
 ## Plugin model
 
 Backends and provider adapters are compiled in. This keeps the execution and
-redaction boundary inspectable in the repository.
+redaction boundary inspectable in the repository. The trusted command backend is
+trusted local configuration, not a general plugin system.
 
 ## Receipt signing
 

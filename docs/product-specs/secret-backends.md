@@ -19,6 +19,16 @@ Implemented:
   - Windows Credential Manager
   - Linux Secret Service/libsecret
 - 1Password through `op read`
+- Bitwarden Secrets Manager through `bws secret get`
+- Doppler through `doppler secrets get`
+- Infisical through `infisical secrets get`
+- HashiCorp Vault through `vault kv get`
+- AWS Secrets Manager through `aws secretsmanager get-secret-value`
+- AWS SSM Parameter Store through `aws ssm get-parameter`
+- GCP Secret Manager through `gcloud secrets versions access`
+- Azure Key Vault through `az keyvault secret show`
+- SOPS encrypted files through `sops --decrypt --extract`
+- trusted local command backend for local escape-hatch integrations
 
 ## Backend contract
 
@@ -31,11 +41,19 @@ Backends support:
 
 The implementation exposes a `SecretBackend` trait, redacted `SecretLease`
 values, and a serializable `SecretBackendConfig` factory for selecting fake,
-`.env`, 1Password, and OS keychain backends without binding the main CLI to a
-provider-specific workflow. Agent-facing execution builds its backend only from
-trusted local configuration. If a backend is configured but cannot be loaded,
-execution fails closed. The CLI must not silently fall back to the fake backend
-or another weaker source.
+`.env`, OS keychain, password manager, developer secret, cloud secret, encrypted
+file, and trusted command backends without binding the main CLI to a hosted
+control plane. Agent-facing execution builds its backend only from trusted local
+configuration. If a backend is configured but cannot be loaded, execution fails
+closed. The CLI must not silently fall back to the fake backend or another
+weaker source.
+
+CLI-backed backends run provider CLIs directly with `Command`, never through a
+shell. Each command has a timeout, captures stdout and stderr, and returns only
+generic provider errors. Errors must not include command stdout, command stderr,
+the raw reference, or provider arguments. Backends that parse JSON preserve the
+exact JSON string value; plain stdout backends remove at most one terminal line
+ending.
 
 ## Reference model
 
@@ -79,6 +97,71 @@ References:
 - 1Password CLI `read`: https://developer.1password.com/docs/cli/reference/commands/read/
 - 1Password secret reference syntax: https://developer.1password.com/docs/cli/secret-reference-syntax/
 
+## CLI-backed provider backends
+
+These backends use local provider CLIs and the user's existing provider
+authentication state. They do not create hosted ctx accounts, OAuth apps, or
+provider-side credentials.
+
+Supported reference forms:
+
+| Backend type | Reference form | Command shape |
+| --- | --- | --- |
+| `bitwarden-secrets-manager` | `bws://<secret-id>` | `bws secret get <secret-id> --output json` and JSON pointer `/value` |
+| `doppler` | `doppler://<name>` | `doppler secrets get <name> --plain` plus optional project/config flags |
+| `infisical` | `infisical://<name>` | `infisical secrets get <name> --plain --silent` plus optional env/path/project flags |
+| `hashicorp-vault` | `vault://<path>#<field>` | `vault kv get [-mount=<mount>] -field=<field> <path>` |
+| `aws-secrets-manager` | `aws-secretsmanager://<secret-id>` | `aws secretsmanager get-secret-value --secret-id <secret-id> --output json` and JSON pointer `/SecretString` |
+| `aws-ssm-parameter-store` | `aws-ssm://<name>` | `aws ssm get-parameter --name <name> --with-decryption --output json` and JSON pointer `/Parameter/Value` |
+| `gcp-secret-manager` | `gcp-secretmanager://<name>` or `gcp-secretmanager://<name>#<version>` | `gcloud secrets versions access <version> --secret <name>` |
+| `azure-key-vault` | `azure-keyvault://<name>` | `az keyvault secret show --vault-name <vault> --name <name> --query value -o tsv` |
+| `sops` | `sops://<key>` or `sops:///<nested>/<key>` | `sops --decrypt --extract <expression> <file>` |
+
+All provider CLI paths are configurable. Optional `timeout_ms` values override
+the default command timeout. AWS commands add noninteractive pager and auto-prompt
+flags. Infisical sets `INFISICAL_DISABLE_UPDATE_CHECK=true`. AWS Secrets Manager
+currently resolves `SecretString`; `SecretBinary` values fail closed.
+
+Example:
+
+```yaml
+secret_backend:
+  type: aws-secrets-manager
+  profile: dev
+  region: us-east-1
+  timeout_ms: 10000
+```
+
+Then a profile resource can reference:
+
+```yaml
+secret_ref: aws-secretsmanager://example-service/example-token
+```
+
+Provider-side audit logs may include secret identifiers or parameter names. Do
+not use sensitive values as provider object names or `secret_ref` identifiers.
+
+## Trusted command backend
+
+The trusted command backend is an escape hatch for local integrations that do
+not yet have a compiled backend. It is configured with a trusted local command
+and argument templates. `{ref}` is replaced with the backend reference as a
+single argument value; no shell is used.
+
+Example:
+
+```yaml
+secret_backend:
+  type: trusted-command
+  command: /usr/local/bin/example-secret
+  args: ["read", "{ref}", "--json"]
+  json_pointer: /value
+```
+
+This backend is intentionally not a general plugin system. The command is trusted
+local configuration and must preserve the same redaction and fail-closed
+expectations as compiled backends.
+
 ## OS keychain backend
 
 The OS keychain backend uses a small store abstraction around the platform
@@ -108,3 +191,8 @@ part of the profile rule hash, but they must not include the raw secret value.
 the strongest security story because agents may be able to read local project
 files directly. The security story starts with OS keychains and remote BYO
 providers such as 1Password.
+
+Read-only secret backends resolve existing credentials. Provider-native token
+issuers, such as GitHub app installation tokens, AWS STS credentials, OAuth
+tokens, or restricted payment keys, are capability adapter work because they mint
+new authority and need different receipts and policy semantics.
