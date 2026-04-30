@@ -29,7 +29,7 @@ const CTX_AUTHORITY_SKILL: &str = include_str!("../skills/ctx-authority/SKILL.md
 const DISMISS_REASON_MAX_CHARS: usize = 200;
 
 #[derive(Debug, Parser)]
-#[command(name = "ctxa", about = "Local capability broker for agents")]
+#[command(name = "ctxa", about = "Local capability broker for agents", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
