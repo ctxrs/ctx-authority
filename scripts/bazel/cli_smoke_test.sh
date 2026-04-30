@@ -43,6 +43,11 @@ run_ctxa grant_create grants create-https --id github-root --profile main-agent 
 run_ctxa grant_delegate grants delegate --from github-root --id worker-issues --profile worker-agent --allow-method GET --path-prefix /repos/example/repo/issues
 run_ctxa grant_list grants list --profile worker-agent
 run_ctxa grant_show grants show worker-issues
+run_ctxa capability_provider capability provider add-github --id github --token-ref op://example-vault/github-token/token
+run_ctxa capability_grant_create capability grant create --id github-cap-root --profile main-agent --provider github --capability github.issues.read --resource github:example/repo --delegable --max-depth 2
+run_ctxa capability_grant_delegate capability grant delegate --from github-cap-root --id github-cap-worker --profile worker-agent --capability github.issues.read --resource github:example/repo
+run_ctxa capability_grant_list capability grant list --profile worker-agent
+run_ctxa capability_grant_show capability grant show github-cap-worker
 run_ctxa profile_test profile test github-reader --method GET --url https://api.github.com/repos/example/repo/issues
 run_ctxa profile_test_grant profile test worker-agent --method GET --url https://api.github.com/repos/example/repo/issues/1
 run_ctxa doctor_profile doctor --profile github-reader

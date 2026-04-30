@@ -1,10 +1,16 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use ctxa::audit::AuditLog;
-use ctxa::boundary::action_request_from_json_str;
+use ctxa::boundary::{action_request_from_json_str, json_value_from_str_no_duplicates};
+use ctxa::capabilities::{
+    capability_grant_chain, child_capability_grant_is_subset, execute_capability,
+    normalize_capability_list, CapabilityExecuteRequest,
+};
 use ctxa::config::{
-    AgentConfig, AppConfig, AppPaths, GrantDelegationConfig, HttpAllowConfig, HttpAuthConfig,
-    HttpGrantConfig, HttpResourceConfig, HttpResourceScheme, PolicyConfig, ProfileConfig,
+    AgentConfig, AppConfig, AppPaths, CapabilityGrantConfig, CapabilityProviderAuthConfig,
+    CapabilityProviderConfig, CapabilityProviderKind, GrantDelegationConfig, HttpAllowConfig,
+    HttpAuthConfig, HttpGrantConfig, HttpResourceConfig, HttpResourceScheme, PolicyConfig,
+    ProfileConfig,
 };
 use ctxa::execution_context::{load_policy_file, ExecutionContext};
 use ctxa::grants::{child_grant_is_subset, grant_chain, normalize_methods, profile_subject};
@@ -52,6 +58,11 @@ enum Command {
     Grants {
         #[command(subcommand)]
         command: GrantCommand,
+    },
+    #[command(about = "Manage and execute provider capabilities")]
+    Capability {
+        #[command(subcommand)]
+        command: CapabilityCommand,
     },
     #[command(about = "Install local runtime instructions")]
     Setup {
@@ -250,6 +261,123 @@ enum GrantCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum CapabilityCommand {
+    #[command(about = "Manage provider adapters")]
+    Provider {
+        #[command(subcommand)]
+        command: CapabilityProviderCommand,
+    },
+    #[command(about = "Manage attenuable provider capability grants")]
+    Grant {
+        #[command(subcommand)]
+        command: CapabilityGrantCommand,
+    },
+    #[command(about = "Execute a granted provider capability")]
+    Execute {
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        capability: String,
+        #[arg(long)]
+        resource: String,
+        #[arg(long, default_value = "{}")]
+        operation: String,
+        #[arg(long, default_value = "{}")]
+        payload: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CapabilityProviderCommand {
+    #[command(name = "add-github", about = "Add or replace a GitHub provider")]
+    Github {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "https://api.github.com")]
+        api_base: String,
+        #[arg(long)]
+        token_ref: Option<String>,
+        #[arg(long)]
+        app_jwt_ref: Option<String>,
+        #[arg(long)]
+        installation_id: Option<u64>,
+    },
+    #[command(name = "add-google", about = "Add or replace a Google provider")]
+    Google {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "https://www.googleapis.com")]
+        api_base: String,
+        #[arg(long)]
+        token_ref: String,
+    },
+    #[command(
+        name = "add-microsoft",
+        about = "Add or replace a Microsoft Graph provider"
+    )]
+    Microsoft {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "https://graph.microsoft.com")]
+        api_base: String,
+        #[arg(long)]
+        token_ref: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CapabilityGrantCommand {
+    #[command(about = "List configured capability grants")]
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    #[command(about = "Show a capability grant")]
+    Show { id: String },
+    #[command(about = "Create a root capability grant")]
+    Create(CapabilityGrantCreateOptions),
+    #[command(about = "Delegate a mechanically narrower capability grant")]
+    Delegate {
+        #[arg(long = "from")]
+        from: String,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        profile: String,
+        #[arg(long = "capability", required = true)]
+        capabilities: Vec<String>,
+        #[arg(long = "resource", required = true)]
+        resources: Vec<String>,
+        #[arg(long)]
+        delegable: bool,
+        #[arg(long, default_value_t = 0)]
+        max_depth: u8,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+struct CapabilityGrantCreateOptions {
+    #[arg(long)]
+    id: String,
+    #[arg(long)]
+    profile: String,
+    #[arg(long)]
+    provider: String,
+    #[arg(long = "capability", required = true)]
+    capabilities: Vec<String>,
+    #[arg(long = "resource", required = true)]
+    resources: Vec<String>,
+    #[arg(long)]
+    delegable: bool,
+    #[arg(long, default_value_t = 0)]
+    max_depth: u8,
+}
+
 #[derive(Debug, clap::Args)]
 struct GrantCreateOptions {
     #[arg(long)]
@@ -344,6 +472,7 @@ fn main() -> anyhow::Result<()> {
         Command::Policy { command } => policy(command),
         Command::Profile { command } => profile(command),
         Command::Grants { command } => grants(command),
+        Command::Capability { command } => capability(command),
         Command::Setup { command } => setup(command),
         Command::Proposals { command } => proposals(command),
         Command::Ca { command } => ca(command),
@@ -667,6 +796,345 @@ fn redacted_grant_audit(kind: &str, grant: &HttpGrantConfig) -> Value {
         "allow": grant.allow,
         "delegation": grant.delegation,
     })
+}
+
+fn capability(command: CapabilityCommand) -> anyhow::Result<()> {
+    match command {
+        CapabilityCommand::Provider { command } => capability_provider(command),
+        CapabilityCommand::Grant { command } => capability_grant(command),
+        CapabilityCommand::Execute {
+            profile,
+            provider,
+            capability,
+            resource,
+            operation,
+            payload,
+        } => capability_execute(profile, provider, capability, resource, operation, payload),
+    }
+}
+
+fn capability_provider(command: CapabilityProviderCommand) -> anyhow::Result<()> {
+    match command {
+        CapabilityProviderCommand::Github {
+            id,
+            api_base,
+            token_ref,
+            app_jwt_ref,
+            installation_id,
+        } => {
+            let auth = match (token_ref, app_jwt_ref, installation_id) {
+                (Some(token_ref), None, None) => CapabilityProviderAuthConfig::Bearer { token_ref },
+                (None, Some(app_jwt_ref), Some(installation_id)) => {
+                    CapabilityProviderAuthConfig::GithubAppInstallation {
+                        app_jwt_ref,
+                        installation_id,
+                    }
+                }
+                _ => anyhow::bail!(
+                    "GitHub provider requires either --token-ref or both --app-jwt-ref and --installation-id"
+                ),
+            };
+            upsert_capability_provider(CapabilityProviderConfig {
+                id,
+                kind: CapabilityProviderKind::Github,
+                api_base,
+                auth,
+            })
+        }
+        CapabilityProviderCommand::Google {
+            id,
+            api_base,
+            token_ref,
+        } => upsert_capability_provider(CapabilityProviderConfig {
+            id,
+            kind: CapabilityProviderKind::Google,
+            api_base,
+            auth: CapabilityProviderAuthConfig::Bearer { token_ref },
+        }),
+        CapabilityProviderCommand::Microsoft {
+            id,
+            api_base,
+            token_ref,
+        } => upsert_capability_provider(CapabilityProviderConfig {
+            id,
+            kind: CapabilityProviderKind::Microsoft,
+            api_base,
+            auth: CapabilityProviderAuthConfig::Bearer { token_ref },
+        }),
+    }
+}
+
+fn upsert_capability_provider(provider: CapabilityProviderConfig) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    let id = provider.id.clone();
+    let kind = capability_provider_kind_name(provider.kind);
+    if let Some(existing) = config
+        .capability_providers
+        .iter_mut()
+        .find(|existing| existing.id == id)
+    {
+        *existing = provider;
+    } else {
+        config.capability_providers.push(provider);
+    }
+    config.save(&paths.config_file)?;
+    AuditLog::open(&paths.audit_db)?.record(
+        "capability_provider_saved",
+        &json!({
+            "id": id,
+            "kind": kind,
+        }),
+    )?;
+    println!("capability provider {id}");
+    Ok(())
+}
+
+fn capability_grant(command: CapabilityGrantCommand) -> anyhow::Result<()> {
+    match command {
+        CapabilityGrantCommand::List { profile, provider } => {
+            list_capability_grants(profile, provider)
+        }
+        CapabilityGrantCommand::Show { id } => show_capability_grant(id),
+        CapabilityGrantCommand::Create(options) => create_root_capability_grant(options),
+        CapabilityGrantCommand::Delegate {
+            from,
+            id,
+            profile,
+            capabilities,
+            resources,
+            delegable,
+            max_depth,
+        } => delegate_capability_grant(
+            from,
+            id,
+            profile,
+            capabilities,
+            resources,
+            delegable,
+            max_depth,
+        ),
+    }
+}
+
+fn list_capability_grants(profile: Option<String>, provider: Option<String>) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    for grant in &config.capability_grants {
+        if profile
+            .as_deref()
+            .is_some_and(|profile| profile != grant.profile)
+        {
+            continue;
+        }
+        if provider
+            .as_deref()
+            .is_some_and(|provider| provider != grant.provider)
+        {
+            continue;
+        }
+        let parent = grant.parent.as_deref().unwrap_or("-");
+        println!(
+            "{} profile={} subject={} parent={} provider={} capabilities={} resources={} delegable={} depth={}",
+            grant.id,
+            grant.profile,
+            grant.subject,
+            parent,
+            grant.provider,
+            grant.capabilities.join(","),
+            grant.resources.join(","),
+            grant.delegation.allowed,
+            grant.delegation.remaining_depth
+        );
+    }
+    Ok(())
+}
+
+fn show_capability_grant(id: String) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    let grant = config
+        .capability_grant(&id)
+        .ok_or_else(|| anyhow::anyhow!("capability grant {id} is not configured"))?;
+    let chain = capability_grant_chain(&config.capability_grants, &id)?;
+    let chain_ids: Vec<&str> = chain.iter().map(|grant| grant.id.as_str()).collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "id": grant.id,
+            "parent": grant.parent,
+            "profile": grant.profile,
+            "subject": grant.subject,
+            "provider": grant.provider,
+            "capabilities": grant.capabilities,
+            "resources": grant.resources,
+            "delegation": grant.delegation,
+            "chain": chain_ids,
+        }))?
+    );
+    Ok(())
+}
+
+fn create_root_capability_grant(options: CapabilityGrantCreateOptions) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    if config.capability_grant(&options.id).is_some() {
+        anyhow::bail!("capability grant {} already exists", options.id);
+    }
+    if options.delegable && options.max_depth == 0 {
+        anyhow::bail!("delegable capability grants must specify --max-depth greater than zero");
+    }
+    if !options.delegable && options.max_depth != 0 {
+        anyhow::bail!("--max-depth requires --delegable");
+    }
+    if config.capability_provider(&options.provider).is_none() {
+        anyhow::bail!("capability provider {} is not configured", options.provider);
+    }
+    let profile = config
+        .profile(&options.profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {} is not configured", options.profile))?;
+    let grant = CapabilityGrantConfig {
+        id: options.id.clone(),
+        parent: None,
+        profile: options.profile.clone(),
+        subject: profile_subject(profile),
+        provider: options.provider,
+        capabilities: normalize_capability_list(options.capabilities),
+        resources: normalize_capability_list(options.resources),
+        delegation: GrantDelegationConfig {
+            allowed: options.delegable,
+            remaining_depth: if options.delegable {
+                options.max_depth
+            } else {
+                0
+            },
+        },
+    };
+    let audit_data = redacted_capability_grant_audit("capability_grant_created", &grant);
+    config.capability_grants.push(grant);
+    config.save(&paths.config_file)?;
+    AuditLog::open(&paths.audit_db)?.record("capability_grant_created", &audit_data)?;
+    println!("capability grant {}", options.id);
+    Ok(())
+}
+
+fn delegate_capability_grant(
+    from: String,
+    id: String,
+    profile: String,
+    capabilities: Vec<String>,
+    resources: Vec<String>,
+    delegable: bool,
+    max_depth: u8,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    if config.capability_grant(&id).is_some() {
+        anyhow::bail!("capability grant {id} already exists");
+    }
+    if delegable && max_depth == 0 {
+        anyhow::bail!("delegable capability grants must specify --max-depth greater than zero");
+    }
+    if !delegable && max_depth != 0 {
+        anyhow::bail!("--max-depth requires --delegable");
+    }
+    let parent = config
+        .capability_grant(&from)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("capability grant {from} is not configured"))?;
+    let child_profile = config
+        .profile(&profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
+    let child = CapabilityGrantConfig {
+        id: id.clone(),
+        parent: Some(parent.id.clone()),
+        profile: profile.clone(),
+        subject: profile_subject(child_profile),
+        provider: parent.provider.clone(),
+        capabilities: normalize_capability_list(capabilities),
+        resources: normalize_capability_list(resources),
+        delegation: GrantDelegationConfig {
+            allowed: delegable,
+            remaining_depth: if delegable { max_depth } else { 0 },
+        },
+    };
+    child_capability_grant_is_subset(&parent, &child)?;
+    let audit_data = redacted_capability_grant_audit("capability_grant_delegated", &child);
+    config.capability_grants.push(child);
+    config.save(&paths.config_file)?;
+    AuditLog::open(&paths.audit_db)?.record("capability_grant_delegated", &audit_data)?;
+    println!("capability grant {id}");
+    Ok(())
+}
+
+fn capability_execute(
+    profile: String,
+    provider: String,
+    capability: String,
+    resource: String,
+    operation: String,
+    payload: String,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let config = AppConfig::load(&paths.config_file)?;
+    let provider_config = config
+        .capability_provider(&provider)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("capability provider {provider} is not configured"))?;
+    let secret_backend = config
+        .secret_backend
+        .as_ref()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "configure `secret_backend` in config.yaml before executing capabilities"
+            )
+        })?
+        .build()?;
+    let request = CapabilityExecuteRequest {
+        profile,
+        provider,
+        capability,
+        resource,
+        operation: json_value_from_str_no_duplicates(&operation)?,
+        payload: json_value_from_str_no_duplicates(&payload)?,
+    };
+    let envelope = execute_capability(
+        &config.profiles,
+        &config.capability_grants,
+        &provider_config,
+        request,
+        secret_backend.as_ref(),
+        &AuditLog::open(&paths.audit_db)?,
+        &ReceiptSigner::load_or_create(&paths)?,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&envelope)?);
+    Ok(())
+}
+
+fn redacted_capability_grant_audit(kind: &str, grant: &CapabilityGrantConfig) -> Value {
+    json!({
+        "kind": kind,
+        "id": grant.id,
+        "parent": grant.parent,
+        "profile": grant.profile,
+        "subject": grant.subject,
+        "provider": grant.provider,
+        "capabilities": grant.capabilities,
+        "resources": grant.resources,
+        "delegation": grant.delegation,
+    })
+}
+
+fn capability_provider_kind_name(kind: CapabilityProviderKind) -> &'static str {
+    match kind {
+        CapabilityProviderKind::Github => "github",
+        CapabilityProviderKind::Google => "google",
+        CapabilityProviderKind::Microsoft => "microsoft",
+    }
 }
 
 fn run(profile_id: String, command: Vec<String>) -> anyhow::Result<()> {
@@ -1250,7 +1718,10 @@ fn receipts(command: ReceiptCommand) -> anyhow::Result<()> {
 fn receipt_records(audit: &AuditLog) -> anyhow::Result<Vec<(String, Receipt, Value)>> {
     let mut receipts = Vec::new();
     for (at, kind, data) in audit.list_all()? {
-        if !matches!(kind.as_str(), "action_executed" | "proxy_request_receipt") {
+        if !matches!(
+            kind.as_str(),
+            "action_executed" | "proxy_request_receipt" | "capability_receipt"
+        ) {
             continue;
         }
         if let Ok(receipt) = serde_json::from_value::<Receipt>(data.clone()) {

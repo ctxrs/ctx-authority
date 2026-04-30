@@ -19,6 +19,10 @@ Implemented tools:
 
 - `capabilities.list`
 - `receipts.verify`
+- `capability.grants.list`
+- `capability.grants.show`
+- `capability.grants.delegate`
+- `capability.execute`
 
 `initialize` requires protocol version `2025-11-25`. Requests with a missing or
 different protocol version fail with a JSON-RPC invalid-params error instead of
@@ -33,6 +37,10 @@ receipt verification.
 
 - `capabilities.list` - implemented
 - `receipts.verify` - implemented with structural verification
+- `capability.grants.list` - implemented
+- `capability.grants.show` - implemented
+- `capability.grants.delegate` - implemented; mutates local config by creating a narrower child grant from the bound profile's parent grant
+- `capability.execute` - implemented; executes only when the bound profile has a matching local capability grant
 
 ## Tool rule
 
@@ -71,6 +79,13 @@ The MCP surface supports:
 
 1. list capabilities
 2. verify receipt structure
+3. list and show provider capability grants
+4. delegate mechanically narrower provider capability grants
+5. execute granted provider capabilities
 
-Action execution, approval state, audit search, and cryptographic receipt
-verification are not available over MCP.
+Approval state, audit search, and cryptographic receipt verification are not
+available over MCP. Capability mutation and execution require the MCP server
+process to be bound to a profile with `CTXA_PROFILE` or `CTXA_MCP_PROFILE`.
+Capability execution is available only for configured local provider adapters
+and local capability grants held by that bound profile. It returns the same
+redacted execution envelope as the CLI.

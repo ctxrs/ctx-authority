@@ -1,7 +1,14 @@
 use crate::boundary::json_value_from_str_no_duplicates;
+use crate::capabilities::{
+    capability_grant_chain, child_capability_grant_is_subset, execute_capability,
+    normalize_capability_list, CapabilityExecuteRequest,
+};
+use crate::config::{AppConfig, AppPaths, CapabilityGrantConfig, GrantDelegationConfig};
+use crate::grants::profile_subject;
 use crate::models::Receipt;
+use crate::receipts::ReceiptSigner;
 use crate::receipts::{receipt_from_json_str_strict, receipt_from_json_value_strict};
-use crate::Result;
+use crate::{audit::AuditLog, Result};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -140,6 +147,97 @@ fn tools() -> Vec<Value> {
                 "required": ["valid", "mode", "checks"]
             }
         }),
+        json!({
+            "name": "capability.grants.list",
+            "title": "List Capability Grants",
+            "description": "List configured provider capability grants held by the bound MCP profile without exposing provider credentials.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": {
+                        "type": "string",
+                        "description": "Optional. When provided, it must match the MCP server's bound profile."
+                    },
+                    "provider": { "type": "string" }
+                }
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "grants": { "type": "array" }
+                },
+                "required": ["grants"]
+            }
+        }),
+        json!({
+            "name": "capability.grants.show",
+            "title": "Show Capability Grant",
+            "description": "Show one capability grant held by the bound MCP profile and its chain.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" }
+                },
+                "required": ["id"]
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "grant": { "type": "object" }
+                },
+                "required": ["grant"]
+            }
+        }),
+        json!({
+            "name": "capability.grants.delegate",
+            "title": "Delegate Capability Grant",
+            "description": "Create a mechanically narrower child capability grant.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "id": { "type": "string" },
+                    "profile": { "type": "string" },
+                    "capabilities": { "type": "array", "items": { "type": "string" } },
+                    "resources": { "type": "array", "items": { "type": "string" } },
+                    "delegable": { "type": "boolean" },
+                    "max_depth": { "type": "integer" }
+                },
+                "required": ["from", "id", "profile", "capabilities", "resources"]
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "grant": { "type": "object" }
+                },
+                "required": ["grant"]
+            }
+        }),
+        json!({
+            "name": "capability.execute",
+            "title": "Execute Capability",
+            "description": "Execute a granted provider capability and return provider response plus signed receipt.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string" },
+                    "provider": { "type": "string" },
+                    "capability": { "type": "string" },
+                    "resource": { "type": "string" },
+                    "operation": { "type": "object" },
+                    "payload": { "type": "object" }
+                },
+                "required": ["provider", "capability", "resource"]
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "capability": { "type": "object" },
+                    "provider_response": {}
+                },
+                "required": ["capability", "provider_response"]
+            }
+        }),
     ]
 }
 
@@ -159,6 +257,16 @@ fn handle_tool_call(id: Value, params: Option<Value>) -> Value {
     match tool_name {
         "capabilities.list" => success_response(id, tool_success(capabilities_list())),
         "receipts.verify" => success_response(id, receipts_verify(&arguments)),
+        "capability.grants.list" => {
+            success_response(id, mcp_result(capability_grants_list(&arguments)))
+        }
+        "capability.grants.show" => {
+            success_response(id, mcp_result(capability_grants_show(&arguments)))
+        }
+        "capability.grants.delegate" => {
+            success_response(id, mcp_result(capability_grants_delegate(&arguments)))
+        }
+        "capability.execute" => success_response(id, mcp_result(capability_execute(&arguments))),
         _ => error_response(id, -32602, format!("unknown tool: {tool_name}")),
     }
 }
@@ -174,9 +282,48 @@ fn capabilities_list() -> Value {
                 "name": "receipts.verify",
                 "status": "available",
                 "verification": "structural"
+            },
+            {
+                "name": "capability.grants.list",
+                "status": "available"
+            },
+            {
+                "name": "capability.grants.show",
+                "status": "available"
+            },
+            {
+                "name": "capability.grants.delegate",
+                "status": "available",
+                "mutates_local_config": true
+            },
+            {
+                "name": "capability.execute",
+                "status": "available",
+                "requires_local_grant": true
             }
         ],
-        "broker_capabilities": []
+        "broker_capabilities": [
+            "github.issues.read",
+            "github.issues.create",
+            "github.issues.comment",
+            "github.prs.read",
+            "google.gmail.messages.read",
+            "google.gmail.drafts.create",
+            "google.gmail.drafts.send",
+            "google.calendar.events.read",
+            "google.calendar.events.create",
+            "google.drive.files.read",
+            "google.drive.files.update",
+            "google.docs.documents.read",
+            "google.docs.documents.update",
+            "microsoft.outlook.messages.read",
+            "microsoft.outlook.drafts.create",
+            "microsoft.outlook.messages.send",
+            "microsoft.calendar.events.read",
+            "microsoft.calendar.events.create",
+            "microsoft.drive.files.read",
+            "microsoft.drive.files.update"
+        ]
     })
 }
 
@@ -185,6 +332,266 @@ fn receipts_verify(arguments: &Value) -> Value {
         Ok(result) => tool_success(result),
         Err(message) => tool_error(message),
     }
+}
+
+fn mcp_result(result: std::result::Result<Value, String>) -> Value {
+    match result {
+        Ok(value) => tool_success(value),
+        Err(message) => tool_error(message),
+    }
+}
+
+fn capability_grants_list(arguments: &Value) -> std::result::Result<Value, String> {
+    let bound_profile = bound_mcp_profile()?;
+    let profile = optional_string(arguments, "profile")?.unwrap_or_else(|| bound_profile.clone());
+    if profile != bound_profile {
+        return Err(format!(
+            "requested profile {profile} does not match bound MCP profile {bound_profile}"
+        ));
+    }
+    let provider = optional_string(arguments, "provider")?;
+    let paths = AppPaths::discover().map_err(redacted_error)?;
+    let config = AppConfig::load(&paths.config_file).map_err(redacted_error)?;
+    let grants: Vec<Value> = config
+        .capability_grants
+        .iter()
+        .filter(|grant| {
+            grant.profile == profile
+                && provider
+                    .as_deref()
+                    .is_none_or(|provider| provider == grant.provider)
+        })
+        .map(capability_grant_value)
+        .collect();
+    Ok(json!({ "grants": grants }))
+}
+
+fn capability_grants_show(arguments: &Value) -> std::result::Result<Value, String> {
+    let bound_profile = bound_mcp_profile()?;
+    let id = required_string(arguments, "id")?;
+    let paths = AppPaths::discover().map_err(redacted_error)?;
+    let config = AppConfig::load(&paths.config_file).map_err(redacted_error)?;
+    let grant = config
+        .capability_grant(&id)
+        .ok_or_else(|| format!("capability grant {id} is not configured"))?;
+    if grant.profile != bound_profile {
+        return Err(format!(
+            "capability grant {id} is held by profile {}, not bound MCP profile {bound_profile}",
+            grant.profile
+        ));
+    }
+    let chain = capability_grant_chain(&config.capability_grants, &id).map_err(redacted_error)?;
+    Ok(json!({
+        "grant": capability_grant_value_with_chain(
+            grant,
+            chain.iter().map(|grant| grant.id.as_str()).collect(),
+        )
+    }))
+}
+
+fn capability_grants_delegate(arguments: &Value) -> std::result::Result<Value, String> {
+    let holder_profile = bound_mcp_profile()?;
+    let from = required_string(arguments, "from")?;
+    let id = required_string(arguments, "id")?;
+    let profile = required_string(arguments, "profile")?;
+    let capabilities = required_string_array(arguments, "capabilities")?;
+    let resources = required_string_array(arguments, "resources")?;
+    let delegable = arguments
+        .get("delegable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_depth = arguments
+        .get("max_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let max_depth: u8 = max_depth
+        .try_into()
+        .map_err(|_| "max_depth is too large".to_string())?;
+    if delegable && max_depth == 0 {
+        return Err("delegable capability grants require max_depth greater than zero".into());
+    }
+    if !delegable && max_depth != 0 {
+        return Err("max_depth requires delegable=true".into());
+    }
+
+    let paths = AppPaths::discover().map_err(redacted_error)?;
+    paths.ensure().map_err(redacted_error)?;
+    let mut config = AppConfig::load(&paths.config_file).map_err(redacted_error)?;
+    if config.capability_grant(&id).is_some() {
+        return Err(format!("capability grant {id} already exists"));
+    }
+    let parent = config
+        .capability_grant(&from)
+        .cloned()
+        .ok_or_else(|| format!("capability grant {from} is not configured"))?;
+    if parent.profile != holder_profile {
+        return Err(format!(
+            "capability grant {from} is held by profile {}, not bound MCP profile {holder_profile}",
+            parent.profile
+        ));
+    }
+    let child_profile = config
+        .profile(&profile)
+        .ok_or_else(|| format!("profile {profile} is not configured"))?;
+    let child = CapabilityGrantConfig {
+        id: id.clone(),
+        parent: Some(parent.id.clone()),
+        profile: profile.clone(),
+        subject: profile_subject(child_profile),
+        provider: parent.provider.clone(),
+        capabilities: normalize_capability_list(capabilities),
+        resources: normalize_capability_list(resources),
+        delegation: GrantDelegationConfig {
+            allowed: delegable,
+            remaining_depth: if delegable { max_depth } else { 0 },
+        },
+    };
+    child_capability_grant_is_subset(&parent, &child).map_err(redacted_error)?;
+    config.capability_grants.push(child.clone());
+    config.save(&paths.config_file).map_err(redacted_error)?;
+    AuditLog::open(&paths.audit_db)
+        .and_then(|audit| {
+            audit.record(
+                "capability_grant_delegated",
+                &json!({
+                    "kind": "capability_grant_delegated",
+                    "id": child.id,
+                    "parent": child.parent,
+                    "profile": child.profile,
+                    "subject": child.subject,
+                    "provider": child.provider,
+                    "capabilities": child.capabilities,
+                    "resources": child.resources,
+                    "delegation": child.delegation,
+                }),
+            )
+        })
+        .map_err(redacted_error)?;
+    Ok(json!({ "grant": capability_grant_value(&child) }))
+}
+
+fn capability_execute(arguments: &Value) -> std::result::Result<Value, String> {
+    let bound_profile = bound_mcp_profile()?;
+    let profile = optional_string(arguments, "profile")?.unwrap_or_else(|| bound_profile.clone());
+    if profile != bound_profile {
+        return Err(format!(
+            "requested profile {profile} does not match bound MCP profile {bound_profile}"
+        ));
+    }
+    let provider = required_string(arguments, "provider")?;
+    let capability = required_string(arguments, "capability")?;
+    let resource = required_string(arguments, "resource")?;
+    let operation = arguments
+        .get("operation")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let payload = arguments
+        .get("payload")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !operation.is_object() {
+        return Err("operation must be an object".into());
+    }
+    if !payload.is_object() {
+        return Err("payload must be an object".into());
+    }
+
+    let paths = AppPaths::discover().map_err(redacted_error)?;
+    paths.ensure().map_err(redacted_error)?;
+    let config = AppConfig::load(&paths.config_file).map_err(redacted_error)?;
+    let provider_config = config
+        .capability_provider(&provider)
+        .cloned()
+        .ok_or_else(|| format!("capability provider {provider} is not configured"))?;
+    let backend = config
+        .secret_backend
+        .as_ref()
+        .ok_or_else(|| "secret_backend is not configured".to_string())?
+        .build()
+        .map_err(redacted_error)?;
+    let envelope = execute_capability(
+        &config.profiles,
+        &config.capability_grants,
+        &provider_config,
+        CapabilityExecuteRequest {
+            profile,
+            provider,
+            capability,
+            resource,
+            operation,
+            payload,
+        },
+        backend.as_ref(),
+        &AuditLog::open(&paths.audit_db).map_err(redacted_error)?,
+        &ReceiptSigner::load_or_create(&paths).map_err(redacted_error)?,
+    )
+    .map_err(redacted_error)?;
+    serde_json::to_value(envelope).map_err(|_| "failed to encode capability result".into())
+}
+
+fn bound_mcp_profile() -> std::result::Result<String, String> {
+    std::env::var("CTXA_MCP_PROFILE")
+        .or_else(|_| std::env::var("CTXA_PROFILE"))
+        .map_err(|_| {
+            "MCP capability mutation and execution require CTXA_PROFILE or CTXA_MCP_PROFILE"
+                .to_string()
+        })
+}
+
+fn capability_grant_value(grant: &CapabilityGrantConfig) -> Value {
+    capability_grant_value_with_chain(grant, Vec::new())
+}
+
+fn capability_grant_value_with_chain(grant: &CapabilityGrantConfig, chain: Vec<&str>) -> Value {
+    json!({
+        "id": grant.id,
+        "parent": grant.parent,
+        "profile": grant.profile,
+        "subject": grant.subject,
+        "provider": grant.provider,
+        "capabilities": grant.capabilities,
+        "resources": grant.resources,
+        "delegation": grant.delegation,
+        "chain": chain,
+    })
+}
+
+fn required_string(arguments: &Value, key: &str) -> std::result::Result<String, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("missing {key}"))
+}
+
+fn optional_string(arguments: &Value, key: &str) -> std::result::Result<Option<String>, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("{key} must be a string")),
+    }
+}
+
+fn required_string_array(arguments: &Value, key: &str) -> std::result::Result<Vec<String>, String> {
+    let values = arguments
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing {key}"))?;
+    let mut strings = Vec::new();
+    for value in values {
+        let Some(value) = value.as_str() else {
+            return Err(format!("{key} must contain only strings"));
+        };
+        strings.push(value.to_string());
+    }
+    if strings.is_empty() {
+        return Err(format!("{key} must not be empty"));
+    }
+    Ok(strings)
+}
+
+fn redacted_error(error: impl std::fmt::Display) -> String {
+    error.to_string()
 }
 
 fn receipt_from_arguments(arguments: &Value) -> std::result::Result<Receipt, String> {
@@ -272,6 +679,9 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::io::Cursor;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn initialize_advertises_tools_capability() {
@@ -353,6 +763,7 @@ mod tests {
         let tools = response["result"]["tools"].as_array().unwrap();
         assert_eq!(tools[0]["name"], "capabilities.list");
         assert_eq!(tools[1]["name"], "receipts.verify");
+        assert_eq!(tools[2]["name"], "capability.grants.list");
     }
 
     #[test]
@@ -490,6 +901,172 @@ mod tests {
 
         assert!(response.get("error").is_none());
         assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn capability_execute_requires_bound_mcp_profile() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("CTXA_PROFILE");
+            std::env::remove_var("CTXA_MCP_PROFILE");
+        }
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "tools/call",
+            "params": {
+                "name": "capability.execute",
+                "arguments": {
+                    "profile": "admin",
+                    "provider": "github",
+                    "capability": "github.issues.read",
+                    "resource": "github:acme/app"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+        assert!(response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("CTXA_PROFILE"));
+    }
+
+    #[test]
+    fn capability_execute_rejects_profile_mismatch_before_loading_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("CTXA_PROFILE", "bound-profile");
+            std::env::remove_var("CTXA_MCP_PROFILE");
+        }
+        let response = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "tools/call",
+            "params": {
+                "name": "capability.execute",
+                "arguments": {
+                    "profile": "other-profile",
+                    "provider": "github",
+                    "capability": "github.issues.read",
+                    "resource": "github:acme/app"
+                }
+            }
+        }))
+        .unwrap();
+        unsafe {
+            std::env::remove_var("CTXA_PROFILE");
+        }
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+        assert!(response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("does not match bound MCP profile"));
+    }
+
+    #[test]
+    fn capability_grant_inspection_is_bound_to_mcp_profile() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("CTXA_HOME", home.path());
+            std::env::set_var("CTXA_PROFILE", "bound-profile");
+            std::env::remove_var("CTXA_MCP_PROFILE");
+        }
+        let paths = AppPaths::for_home(home.path().to_path_buf());
+        AppConfig {
+            profiles: vec![
+                crate::config::ProfileConfig {
+                    id: "bound-profile".into(),
+                    agent: Some("bound-profile".into()),
+                    env_vars: Default::default(),
+                    http_resources: Vec::new(),
+                },
+                crate::config::ProfileConfig {
+                    id: "other-profile".into(),
+                    agent: Some("other-profile".into()),
+                    env_vars: Default::default(),
+                    http_resources: Vec::new(),
+                },
+            ],
+            capability_providers: vec![crate::config::CapabilityProviderConfig {
+                id: "github".into(),
+                kind: crate::config::CapabilityProviderKind::Github,
+                api_base: "https://api.github.com".into(),
+                auth: crate::config::CapabilityProviderAuthConfig::Bearer {
+                    token_ref: "github-token".into(),
+                },
+            }],
+            capability_grants: vec![
+                CapabilityGrantConfig {
+                    id: "bound-grant".into(),
+                    parent: None,
+                    profile: "bound-profile".into(),
+                    subject: "bound-profile".into(),
+                    provider: "github".into(),
+                    capabilities: vec!["github.issues.read".into()],
+                    resources: vec!["github:acme/app".into()],
+                    delegation: GrantDelegationConfig::default(),
+                },
+                CapabilityGrantConfig {
+                    id: "other-grant".into(),
+                    parent: None,
+                    profile: "other-profile".into(),
+                    subject: "other-profile".into(),
+                    provider: "github".into(),
+                    capabilities: vec!["github.issues.read".into()],
+                    resources: vec!["github:acme/app".into()],
+                    delegation: GrantDelegationConfig::default(),
+                },
+            ],
+            ..Default::default()
+        }
+        .save(&paths.config_file)
+        .unwrap();
+
+        let list = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 43,
+            "method": "tools/call",
+            "params": {
+                "name": "capability.grants.list",
+                "arguments": {}
+            }
+        }))
+        .unwrap();
+        assert_eq!(list["result"]["isError"], false);
+        let grants = list["result"]["structuredContent"]["grants"]
+            .as_array()
+            .unwrap();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0]["id"], "bound-grant");
+
+        let show = handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 44,
+            "method": "tools/call",
+            "params": {
+                "name": "capability.grants.show",
+                "arguments": {
+                    "id": "other-grant"
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(show["result"]["isError"], true);
+        assert!(show["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not bound MCP profile"));
+
+        unsafe {
+            std::env::remove_var("CTXA_HOME");
+            std::env::remove_var("CTXA_PROFILE");
+        }
     }
 
     #[test]

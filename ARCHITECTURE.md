@@ -11,7 +11,8 @@ boundaries.
 Implemented surfaces:
 
 - local CLI
-- MCP server for metadata and structural receipt verification
+- MCP server for metadata, structural receipt verification, profile-bound
+  capability grant delegation, and granted capability execution
 - agent-agnostic skill/instruction pack
 - local policies
 - fail-closed approval handling
@@ -19,8 +20,10 @@ Implemented surfaces:
 - signed receipts
 - secret backend interface
 - provider/action adapter interface
+- provider capability adapters for local BYO provider tokens
 - profile-scoped HTTP and HTTPS proxy for `ctxa run`
 - profile-held HTTP grants and grant-backed proxy matching
+- profile-held provider capability grants and delegation
 - fake providers and deterministic tests
 
 ## Control path
@@ -59,9 +62,16 @@ The skill is documentation plus examples, not a privileged execution surface.
 - `SecretBackend`: source of durable credentials.
 - `ProviderAdapter`: executor that uses credentials without exposing them to the
   agent.
+- `CapabilityIssuer`: provider adapter that issues an internal lease from a
+  locally configured provider credential and executes a named provider
+  capability.
+- `CapabilityLease`: internal short-lived provider authority. It is not printed,
+  stored in audit events, or returned through MCP.
 - `ProfileResource`: HTTP or HTTPS resource rule for a launched agent process.
 - `Grant`: attenuable HTTP authority that can be delegated without copying the
   root secret reference into child grants.
+- `CapabilityGrant`: attenuable provider authority scoped by profile, provider,
+  capability list, and typed resource list.
 - `AuditEvent`: local event record.
 - `IdempotencyKey`: duplicate-execution guard.
 

@@ -3,6 +3,7 @@ pub mod audit;
 pub mod backends;
 pub mod boundary;
 pub mod canonical;
+pub mod capabilities;
 pub mod config;
 pub mod error;
 pub mod execution_context;

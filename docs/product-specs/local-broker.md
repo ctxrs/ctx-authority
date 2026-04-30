@@ -46,6 +46,12 @@ ctxa grants create-https --id github-root --profile main-agent --host api.github
 ctxa grants delegate --from github-root --id github-issues --profile worker-agent --allow-method GET --path-prefix /repos/example/repo/issues
 ctxa grants list --profile worker-agent
 ctxa grants show github-issues
+ctxa capability provider add-github --id github --token-ref op://example-vault/github-token/token
+ctxa capability grant create --id github-cap-root --profile main-agent --provider github --capability github.issues.read --resource github:example/repo --delegable --max-depth 2
+ctxa capability grant delegate --from github-cap-root --id github-cap-worker --profile worker-agent --capability github.issues.read --resource github:example/repo
+ctxa capability grant list --profile worker-agent
+ctxa capability grant show github-cap-worker
+ctxa capability execute --profile worker-agent --provider github --capability github.issues.read --resource github:example/repo --operation '{"state":"open"}'
 ctxa profile test github-reader --url https://api.github.com/repos/example/repo/issues
 ctxa doctor --profile github-reader
 ctxa run --profile github-reader -- my-agent
@@ -66,7 +72,8 @@ ctxa mcp serve
 
 `policy check` is a diagnostic surface and may take an explicit policy path. `action request` is an execution surface and uses the trusted policy attached to the configured local agent profile; agents cannot supply policy paths at execution time.
 
-The MCP server exposes metadata and structural receipt verification. It does not execute actions.
+The MCP server exposes metadata, structural receipt verification, profile-bound
+capability grant delegation, and granted provider capability execution.
 
 ## Offline test scenario
 

@@ -1,4 +1,5 @@
 use crate::backends::SecretBackendConfig;
+use crate::capabilities::validate_capability_grants;
 use crate::grants::validate_http_grants;
 use crate::policy::is_valid_http_path_prefix;
 use crate::{AuthorityError, Result};
@@ -54,6 +55,10 @@ pub struct AppConfig {
     pub profiles: Vec<ProfileConfig>,
     #[serde(default)]
     pub grants: Vec<HttpGrantConfig>,
+    #[serde(default)]
+    pub capability_providers: Vec<CapabilityProviderConfig>,
+    #[serde(default)]
+    pub capability_grants: Vec<CapabilityGrantConfig>,
     #[serde(default)]
     pub secret_backend: Option<SecretBackendConfig>,
 }
@@ -117,6 +122,51 @@ pub struct HttpGrantConfig {
     pub secret_ref: Option<String>,
     #[serde(default)]
     pub allow: HttpAllowConfig,
+    #[serde(default)]
+    pub delegation: GrantDelegationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityProviderConfig {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: CapabilityProviderKind,
+    pub api_base: String,
+    pub auth: CapabilityProviderAuthConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityProviderKind {
+    Github,
+    Google,
+    Microsoft,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CapabilityProviderAuthConfig {
+    Bearer {
+        token_ref: String,
+    },
+    GithubAppInstallation {
+        app_jwt_ref: String,
+        installation_id: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityGrantConfig {
+    pub id: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    pub profile: String,
+    pub subject: String,
+    pub provider: String,
+    pub capabilities: Vec<String>,
+    pub resources: Vec<String>,
     #[serde(default)]
     pub delegation: GrantDelegationConfig,
 }
@@ -206,13 +256,34 @@ impl AppConfig {
             self.profiles.iter().map(|profile| profile.id.as_str()),
         )?;
         ensure_unique_ids("grant", self.grants.iter().map(|grant| grant.id.as_str()))?;
+        ensure_unique_ids(
+            "capability provider",
+            self.capability_providers
+                .iter()
+                .map(|provider| provider.id.as_str()),
+        )?;
+        ensure_unique_ids(
+            "capability grant",
+            self.capability_grants.iter().map(|grant| grant.id.as_str()),
+        )?;
         for profile in &self.profiles {
             profile.validate()?;
         }
         for grant in &self.grants {
             grant.validate()?;
         }
+        for provider in &self.capability_providers {
+            provider.validate()?;
+        }
+        for grant in &self.capability_grants {
+            grant.validate()?;
+        }
         validate_http_grants(&self.profiles, &self.grants)?;
+        validate_capability_grants(
+            &self.profiles,
+            &self.capability_providers,
+            &self.capability_grants,
+        )?;
         Ok(())
     }
 
@@ -226,6 +297,16 @@ impl AppConfig {
 
     pub fn grant(&self, id: &str) -> Option<&HttpGrantConfig> {
         self.grants.iter().find(|grant| grant.id == id)
+    }
+
+    pub fn capability_provider(&self, id: &str) -> Option<&CapabilityProviderConfig> {
+        self.capability_providers
+            .iter()
+            .find(|provider| provider.id == id)
+    }
+
+    pub fn capability_grant(&self, id: &str) -> Option<&CapabilityGrantConfig> {
+        self.capability_grants.iter().find(|grant| grant.id == id)
     }
 }
 
@@ -344,6 +425,89 @@ impl HttpGrantConfig {
     }
 }
 
+impl CapabilityProviderConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_id("capability provider", &self.id)?;
+        validate_api_base(&self.api_base)?;
+        match (&self.kind, &self.auth) {
+            (
+                CapabilityProviderKind::Github,
+                CapabilityProviderAuthConfig::Bearer { token_ref },
+            ) => validate_secret_ref("capability provider token_ref", token_ref),
+            (
+                CapabilityProviderKind::Github,
+                CapabilityProviderAuthConfig::GithubAppInstallation {
+                    app_jwt_ref,
+                    installation_id,
+                },
+            ) => {
+                validate_secret_ref("capability provider app_jwt_ref", app_jwt_ref)?;
+                if *installation_id == 0 {
+                    return Err(AuthorityError::Config(format!(
+                        "capability provider {} has invalid installation_id",
+                        self.id
+                    )));
+                }
+                Ok(())
+            }
+            (
+                CapabilityProviderKind::Google | CapabilityProviderKind::Microsoft,
+                CapabilityProviderAuthConfig::Bearer { token_ref },
+            ) => validate_secret_ref("capability provider token_ref", token_ref),
+            (
+                CapabilityProviderKind::Google | CapabilityProviderKind::Microsoft,
+                CapabilityProviderAuthConfig::GithubAppInstallation { .. },
+            ) => Err(AuthorityError::Config(format!(
+                "capability provider {} uses GitHub App auth with a non-GitHub provider",
+                self.id
+            ))),
+        }
+    }
+}
+
+impl CapabilityGrantConfig {
+    pub fn validate(&self) -> Result<()> {
+        validate_id("capability grant", &self.id)?;
+        if let Some(parent) = &self.parent {
+            validate_id("capability grant parent", parent)?;
+        }
+        validate_id("capability grant profile", &self.profile)?;
+        validate_id("capability grant subject", &self.subject)?;
+        validate_id("capability grant provider", &self.provider)?;
+        if self.capabilities.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "capability grant {} must specify at least one capability",
+                self.id
+            )));
+        }
+        if self.resources.is_empty() {
+            return Err(AuthorityError::Config(format!(
+                "capability grant {} must specify at least one resource",
+                self.id
+            )));
+        }
+        for capability in &self.capabilities {
+            validate_capability_name(capability)?;
+        }
+        for resource in &self.resources {
+            validate_resource_name(resource)?;
+        }
+        if !self.delegation.allowed && self.delegation.remaining_depth != 0 {
+            return Err(AuthorityError::Config(format!(
+                "capability grant {} has remaining_depth without delegation",
+                self.id
+            )));
+        }
+        if self.delegation.allowed && self.delegation.remaining_depth == 0 {
+            return Err(AuthorityError::Config(format!(
+                "capability grant {} allows delegation but has zero remaining_depth",
+                self.id
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for id in ids {
@@ -354,7 +518,7 @@ fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Res
     Ok(())
 }
 
-fn validate_id(label: &str, id: &str) -> Result<()> {
+pub(crate) fn validate_id(label: &str, id: &str) -> Result<()> {
     if id.is_empty()
         || id.len() > 64
         || !id
@@ -366,6 +530,69 @@ fn validate_id(label: &str, id: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_secret_ref(label: &str, secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        return Err(AuthorityError::Config(format!("{label} must not be empty")));
+    }
+    Ok(())
+}
+
+fn validate_capability_name(capability: &str) -> Result<()> {
+    if capability.is_empty()
+        || capability.len() > 128
+        || capability.starts_with('.')
+        || capability.ends_with('.')
+        || capability.contains("..")
+        || !capability
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.')
+    {
+        return Err(AuthorityError::Config(format!(
+            "invalid capability {capability}; use lowercase dotted names"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_resource_name(resource: &str) -> Result<()> {
+    if resource.is_empty()
+        || resource.len() > 512
+        || resource.bytes().any(|byte| byte.is_ascii_control())
+        || resource.contains(' ')
+        || !resource.contains(':')
+    {
+        return Err(AuthorityError::Config(format!(
+            "invalid resource {resource}; use a provider-prefixed resource id"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_api_base(api_base: &str) -> Result<()> {
+    let url = reqwest::Url::parse(api_base)
+        .map_err(|_| AuthorityError::Config("invalid api_base".into()))?;
+    let Some(host) = url.host_str() else {
+        return Err(AuthorityError::Config("invalid api_base".into()));
+    };
+    let loopback_http = url.scheme() == "http" && is_loopback_host(host);
+    if !(url.scheme() == "https" || loopback_http)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(AuthorityError::Config("invalid api_base".into()));
+    }
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|addr| addr.is_loopback())
 }
 
 fn validate_env_key(key: &str) -> Result<()> {
@@ -562,6 +789,40 @@ profiles:
         .unwrap();
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("reserved"));
+    }
+
+    #[test]
+    fn capability_provider_api_base_rejects_non_loopback_http_without_echoing_url() {
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+capability_providers:
+  - id: github
+    type: github
+    api_base: http://token@example.com:80/path?secret=value
+    auth:
+      type: bearer
+      token_ref: github-token
+"#,
+        )
+        .unwrap();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("invalid api_base"));
+        assert!(!err.contains("token"));
+        assert!(!err.contains("secret"));
+
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+capability_providers:
+  - id: github
+    type: github
+    api_base: http://127.0.0.1:8080
+    auth:
+      type: bearer
+      token_ref: github-token
+"#,
+        )
+        .unwrap();
+        config.validate().unwrap();
     }
 
     #[test]

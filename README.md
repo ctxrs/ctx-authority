@@ -113,6 +113,37 @@ ctxa grants delegate \
 Child grants do not store or print the root secret reference. `ctxa` resolves
 the root secret internally only when a matching brokered request runs.
 
+Provider capability adapters are available when the agent should call a known
+provider API through `ctxa` instead of through a generic proxy. This example lets
+an agent read GitHub issues without seeing the GitHub token:
+
+```sh
+ctxa capability provider add-github \
+  --id github \
+  --token-ref op://example-vault/github-token/token
+
+ctxa capability grant create \
+  --id github-issues-read \
+  --profile github-reader \
+  --provider github \
+  --capability github.issues.read \
+  --resource github:example-org/example-repo
+
+ctxa capability execute \
+  --profile github-reader \
+  --provider github \
+  --capability github.issues.read \
+  --resource github:example-org/example-repo \
+  --operation '{"state":"open"}'
+```
+
+The command returns the provider response plus a signed receipt. The receipt
+names the exact capability, resource, grant, provider request id, and credential
+reference hash; it does not include the bearer token or raw credential
+reference. GitHub providers can use a bearer token or a GitHub App installation
+token minted from a locally supplied app JWT. Google and Microsoft providers use
+bring-your-own bearer tokens from the configured secret backend.
+
 Check the profile before launching an agent:
 
 ```sh
@@ -196,13 +227,22 @@ A structured unit of HTTP authority held by a profile. A delegable grant can
 mint child grants that are mechanically narrower than the parent grant. Child
 grants reference their parent and do not copy root secret references.
 
+**Capability Grant**
+
+A structured unit of provider authority held by a profile. Capability grants
+bind a profile to a provider id, named capabilities, and typed resources such as
+`github:owner/repo`, `google:gmail`, or `microsoft:outlook`. Delegated child
+grants must stay within the parent provider, capabilities, resources, and
+delegation depth.
+
 **Policy**
 
 A local YAML document that grants scoped capabilities for explicit JSON action requests. Execution uses the policy hash pinned by `ctxa policy trust`; agents cannot provide a policy path at action time.
 
 **Capability**
 
-A type of action, such as `http.request` or `email.send`.
+A type of action, such as `http.request`, `email.send`, or
+`github.issues.read`.
 
 **Secret Backend**
 
@@ -225,6 +265,9 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - run profiles with `ctxa profile create`, `ctxa profile add-http`, `ctxa profile add-https`, and `ctxa run`
 - loopback credential proxy for profile-scoped HTTP and HTTPS requests
 - attenuable HTTP grants with `ctxa grants create-http`, `ctxa grants create-https`, `ctxa grants delegate`, `ctxa grants list`, and `ctxa grants show`
+- provider capability adapters for GitHub, Google, and Microsoft Graph through `ctxa capability`
+- attenuable provider capability grants with `ctxa capability grant create`, `ctxa capability grant delegate`, `ctxa capability grant list`, and `ctxa capability grant show`
+- capability execution receipts with provider request metadata and redacted credential reference hashes
 - redacted proposal events for authenticated requests denied by profile policy
 - proposal apply and dismiss workflow for turning denied requests into profile resources
 - local diagnostics with `ctxa doctor`, `ctxa ca status`, and `ctxa profile test`
@@ -235,6 +278,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - Ed25519-signed receipts
 - local receipt list/show/verify workflow
 - structural MCP receipt verification
+- MCP tools for capability grant list/show/delegate and capability execution
 - pluggable secret backend interface
 - `.env`, OS keychain, 1Password CLI, Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, SOPS, trusted local command, and test backends
 
@@ -250,11 +294,17 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 
 ## MCP
 
-`ctxa mcp serve` starts a stdio MCP server for broker metadata and structural receipt verification.
+`ctxa mcp serve` starts a stdio MCP server for broker metadata, structural
+receipt verification, profile-bound capability grant delegation, and granted
+provider capability execution.
 
 ```sh
 ctxa mcp serve
 ```
+
+Capability mutation and execution tools require the MCP server process to be
+bound to a profile with `CTXA_PROFILE` or `CTXA_MCP_PROFILE`. When `ctxa` starts
+an agent through `ctxa run`, `CTXA_PROFILE` is provided automatically.
 
 For cryptographic receipt verification, use:
 

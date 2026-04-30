@@ -10,10 +10,10 @@ repository.
 | CLI | Implemented | Core init/profile/run/agent/policy/action/log/receipt commands are implemented. |
 | Run profiles | Implemented | `ctxa run` starts a loopback proxy for scoped HTTP and HTTPS profile resources. HTTPS support is process-scoped to the launched child process. |
 | Grants | Implemented | HTTP grants can be delegated into mechanically narrower child grants. Grant-backed proxy requests resolve the root secret internally and emit receipts with redacted grant-chain metadata. |
-| MCP server | Implemented | Initialize, ping, tool list, capabilities, and structural receipt verification are implemented. |
+| MCP server | Implemented | Initialize, ping, tool list, capabilities, structural receipt verification, capability grant inspection/delegation, and capability execution are implemented. |
 | Policy engine | Implemented | YAML allow/deny/approval decisions use strict field and version validation. |
 | Secret backends | Implemented | Fake, `.env`, OS keychain abstraction, 1Password, Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, SOPS, and trusted local command adapters are implemented. |
-| Provider adapters | Implemented | Fake provider adapter and profile proxy execution path are implemented. |
+| Provider adapters | Implemented | Fake provider adapter, profile proxy execution path, and local BYO-token GitHub/Google/Microsoft capability adapters are implemented. |
 | Proposals | Implemented | Authenticated profile-proxy denials record redacted local proposal events that can be shown, applied, or dismissed. |
 | Diagnostics | Implemented | `ctxa doctor`, `ctxa ca status`, and `ctxa profile test` are implemented. |
 | Approvals | Limited | Approval-required actions fail closed unless an approval provider is configured. |
