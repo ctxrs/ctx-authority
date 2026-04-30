@@ -13,8 +13,9 @@ agent process -> HTTPS_PROXY -> ctxa local proxy -> profile rule -> secret backe
 
 ### Process-scoped HTTPS proxy
 
-- Added an explicit `scheme` field to profile HTTP resources. Existing resources
-  default to `http`; `ctxa profile add-https` writes `scheme: https`.
+- Added an explicit `scheme` field to profile HTTP resources. Hand-written
+  resources now default to `https`; `ctxa profile add-http` writes
+  `scheme: http`.
 - HTTP bare hosts default to port 80. HTTPS bare hosts default to port 443.
 - `ctxa profile add-https` and `profile test` must treat `api.example.com` and
   `api.example.com:443` as the same HTTPS resource; `:80` must not match.

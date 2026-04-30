@@ -1,23 +1,28 @@
 use crate::audit::AuditLog;
 use crate::backends::{SecretBackend, SecretLease};
 use crate::config::{
-    CapabilityGrantConfig, CapabilityProviderAuthConfig, CapabilityProviderConfig,
-    CapabilityProviderKind, GrantDelegationConfig, ProfileConfig,
+    CapabilityGrantConfig, CapabilityGrantConstraints, CapabilityProviderAuthConfig,
+    CapabilityProviderConfig, CapabilityProviderKind, GrantDelegationConfig, ProfileConfig,
 };
 use crate::grants::profile_subject;
 use crate::models::{ActionRequest, ProviderExecution, Receipt};
 use crate::receipts::{action_hash, payload_hash, ReceiptSigner};
 use crate::{AuthorityError, Result};
 use chrono::{DateTime, Utc};
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
+use reqwest::redirect::Policy as RedirectPolicy;
 use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::Read;
+use std::time::Duration;
 use uuid::Uuid;
 
 const ADAPTER_VERSION: &str = "ctxa.capability-adapter.v1";
+const PROVIDER_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_PROVIDER_RESPONSE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct CapabilityGrantMatch {
@@ -116,13 +121,7 @@ pub fn execute_capability(
         "capability_requested",
         &capability_audit_data(profile, provider, &request, None, "requested"),
     )?;
-    let matched = match matching_capability_grant(
-        profile,
-        grants,
-        &request.provider,
-        &request.capability,
-        &request.resource,
-    )? {
+    let matched = match matching_capability_grant(profile, grants, &request)? {
         Some(matched) => matched,
         None => {
             audit.record(
@@ -163,6 +162,14 @@ pub fn execute_capability(
             return Err(err);
         }
     };
+    let receipt_context = CapabilityReceiptContext {
+        profile,
+        provider,
+        request: &request,
+        matched: &matched,
+        lease: &lease,
+        signer,
+    };
     let provider_response = match issuer.execute(&request, &lease) {
         Ok(response) => response,
         Err(err) => {
@@ -176,18 +183,17 @@ pub fn execute_capability(
                     "provider_execution_failed",
                 ),
             )?;
+            if let Ok(receipt) =
+                issue_capability_failure_receipt(&receipt_context, "provider_execution_failed")
+            {
+                if let Ok(value) = serde_json::to_value(&receipt) {
+                    let _ = audit.record("capability_receipt", &value);
+                }
+            }
             return Err(err);
         }
     };
-    let receipt = issue_capability_receipt(
-        profile,
-        provider,
-        &request,
-        &matched,
-        &lease,
-        &provider_response,
-        signer,
-    )?;
+    let receipt = issue_capability_receipt(&receipt_context, &provider_response)?;
     audit.record("capability_receipt", &serde_json::to_value(&receipt)?)?;
 
     Ok(CapabilityExecutionEnvelope {
@@ -294,15 +300,17 @@ pub fn validate_capability_grants(
 pub fn matching_capability_grant(
     profile: &ProfileConfig,
     grants: &[CapabilityGrantConfig],
-    provider: &str,
-    capability: &str,
-    resource: &str,
+    request: &CapabilityExecuteRequest,
 ) -> Result<Option<CapabilityGrantMatch>> {
     for grant in grants {
         if grant.profile != profile.id
-            || grant.provider != provider
-            || !grant.capabilities.iter().any(|item| item == capability)
-            || !grant.resources.iter().any(|item| item == resource)
+            || grant.provider != request.provider
+            || !grant
+                .capabilities
+                .iter()
+                .any(|item| item == &request.capability)
+            || !grant.resources.iter().any(|item| item == &request.resource)
+            || !capability_constraints_match(&grant.constraints, request)
         {
             continue;
         }
@@ -439,6 +447,65 @@ fn validate_child_capability_subset(
             )));
         }
     }
+    child_constraints_are_subset(parent, child)?;
+    Ok(())
+}
+
+fn capability_constraints_match(
+    constraints: &CapabilityGrantConstraints,
+    request: &CapabilityExecuteRequest,
+) -> bool {
+    json_object_contains(&request.operation, &constraints.operation_equals)
+        && json_object_contains(&request.payload, &constraints.payload_equals)
+}
+
+fn json_object_contains(value: &Value, expected: &BTreeMap<String, Value>) -> bool {
+    if expected.is_empty() {
+        return true;
+    }
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    expected
+        .iter()
+        .all(|(key, expected)| object.get(key) == Some(expected))
+}
+
+fn child_constraints_are_subset(
+    parent: &CapabilityGrantConfig,
+    child: &CapabilityGrantConfig,
+) -> Result<()> {
+    constraints_include_parent(
+        &parent.constraints.operation_equals,
+        &child.constraints.operation_equals,
+        "operation",
+        child,
+        parent,
+    )?;
+    constraints_include_parent(
+        &parent.constraints.payload_equals,
+        &child.constraints.payload_equals,
+        "payload",
+        child,
+        parent,
+    )
+}
+
+fn constraints_include_parent(
+    parent_constraints: &BTreeMap<String, Value>,
+    child_constraints: &BTreeMap<String, Value>,
+    label: &str,
+    child: &CapabilityGrantConfig,
+    parent: &CapabilityGrantConfig,
+) -> Result<()> {
+    for (key, parent_value) in parent_constraints {
+        if child_constraints.get(key) != Some(parent_value) {
+            return Err(AuthorityError::Config(format!(
+                "child capability grant {} {label} constraint {key} is outside parent {}",
+                child.id, parent.id
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -462,9 +529,14 @@ impl ProviderCapabilityIssuer {
     fn new(provider: CapabilityProviderConfig) -> Result<Self> {
         let api_base = Url::parse(&provider.api_base)
             .map_err(|_| AuthorityError::Config("invalid api_base".into()))?;
-        let client = Client::builder().no_proxy().build().map_err(|err| {
-            AuthorityError::Provider(format!("provider client setup failed: {err}"))
-        })?;
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(RedirectPolicy::none())
+            .timeout(PROVIDER_HTTP_TIMEOUT)
+            .build()
+            .map_err(|err| {
+                AuthorityError::Provider(format!("provider client setup failed: {err}"))
+            })?;
         Ok(Self {
             provider,
             api_base,
@@ -504,14 +576,10 @@ impl CapabilityIssuer for ProviderCapabilityIssuer {
                     ));
                 }
                 let jwt = backend.resolve(app_jwt_ref)?;
-                let url = self
-                    .api_base
-                    .join(&format!(
-                        "/app/installations/{installation_id}/access_tokens"
-                    ))
-                    .map_err(|err| {
-                        AuthorityError::Provider(format!("invalid GitHub token mint URL: {err}"))
-                    })?;
+                let url = join_provider_url(
+                    &self.api_base,
+                    &format!("/app/installations/{installation_id}/access_tokens"),
+                )?;
                 let response = self
                     .client
                     .post(url)
@@ -523,7 +591,8 @@ impl CapabilityIssuer for ProviderCapabilityIssuer {
                         AuthorityError::Provider(format!("GitHub token mint failed: {err}"))
                     })?;
                 let status = response.status();
-                let body: Value = response.json().map_err(|err| {
+                let text = read_provider_response_text(response)?;
+                let body: Value = serde_json::from_str(&text).map_err(|err| {
                     AuthorityError::Provider(format!(
                         "GitHub token mint response was not JSON: {err}"
                     ))
@@ -563,7 +632,9 @@ impl CapabilityIssuer for ProviderCapabilityIssuer {
         lease: &CapabilityLease,
     ) -> Result<CapabilityProviderResponse> {
         let planned = plan_provider_request(self.provider.kind, request)?;
-        let mut response = execute_provider_http(&self.client, &self.api_base, lease, planned)?;
+        let api_base =
+            api_base_for_capability(self.provider.kind, &request.capability, &self.api_base)?;
+        let mut response = execute_provider_http(&self.client, &api_base, lease, planned)?;
         if request.capability == "github.issues.read" {
             response.body = filter_github_issue_response(response.body);
         }
@@ -585,9 +656,7 @@ fn execute_provider_http(
     lease: &CapabilityLease,
     planned: PlannedProviderRequest,
 ) -> Result<CapabilityProviderResponse> {
-    let mut url = api_base
-        .join(&planned.path)
-        .map_err(|err| AuthorityError::Provider(format!("invalid provider URL: {err}")))?;
+    let mut url = join_provider_url(api_base, &planned.path)?;
     if !planned.query.is_empty() {
         let mut pairs = url.query_pairs_mut();
         for (key, value) in planned.query {
@@ -607,9 +676,7 @@ fn execute_provider_http(
         .map_err(|err| AuthorityError::Provider(format!("provider request failed: {err}")))?;
     let status = response.status();
     let provider_request_id = provider_request_id(response.headers());
-    let text = response
-        .text()
-        .map_err(|err| AuthorityError::Provider(format!("provider response read failed: {err}")))?;
+    let text = read_provider_response_text(response)?;
     if !status.is_success() {
         return Err(AuthorityError::Provider(format!(
             "provider returned HTTP {status}"
@@ -625,6 +692,59 @@ fn execute_provider_http(
         status,
         body,
     })
+}
+
+fn join_provider_url(api_base: &Url, planned_path: &str) -> Result<Url> {
+    let relative_path = planned_path.trim_start_matches('/');
+    if relative_path.is_empty() {
+        return Err(AuthorityError::Provider("invalid provider URL".into()));
+    }
+    let mut base = api_base.clone();
+    let path = base.path().trim_end_matches('/');
+    let normalized_path = if path.is_empty() {
+        "/".to_string()
+    } else {
+        format!("{path}/")
+    };
+    base.set_path(&normalized_path);
+    base.join(relative_path)
+        .map_err(|err| AuthorityError::Provider(format!("invalid provider URL: {err}")))
+}
+
+fn api_base_for_capability(
+    provider_kind: CapabilityProviderKind,
+    capability: &str,
+    configured: &Url,
+) -> Result<Url> {
+    if provider_kind == CapabilityProviderKind::Google
+        && capability.starts_with("google.docs.")
+        && is_default_google_api_base(configured)
+    {
+        return Url::parse("https://docs.googleapis.com")
+            .map_err(|_| AuthorityError::Provider("invalid provider URL".into()));
+    }
+    Ok(configured.clone())
+}
+
+fn is_default_google_api_base(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("www.googleapis.com")
+        && matches!(url.path(), "" | "/")
+}
+
+fn read_provider_response_text(response: Response) -> Result<String> {
+    let mut reader = response.take(MAX_PROVIDER_RESPONSE_BYTES + 1);
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| AuthorityError::Provider(format!("provider response read failed: {err}")))?;
+    if bytes.len() as u64 > MAX_PROVIDER_RESPONSE_BYTES {
+        return Err(AuthorityError::Provider(
+            "provider response exceeded size limit".into(),
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| AuthorityError::Provider("provider response was not valid UTF-8".into()))
 }
 
 fn provider_request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
@@ -682,10 +802,11 @@ fn plan_github_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
         "github.issues.create" => Ok(PlannedProviderRequest {
             method: Method::POST,
             path: format!("{repo_path}/issues"),
-            query: Vec::new(),
+            query: no_operation(&request.operation)?,
             body: Some(request.payload.clone()),
         }),
         "github.issues.comment" => {
+            reject_unknown_operation_keys(&request.operation, &["issue_number"])?;
             let issue_number = required_u64(&request.operation, "issue_number")?;
             Ok(PlannedProviderRequest {
                 method: Method::POST,
@@ -721,7 +842,7 @@ fn plan_google_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: "/gmail/v1/users/me/drafts".into(),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -729,7 +850,7 @@ fn plan_google_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: "/gmail/v1/users/me/drafts/send".into(),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -754,7 +875,7 @@ fn plan_google_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
                     "/calendar/v3/calendars/{}/events",
                     path_segment(&calendar_id)
                 ),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -778,7 +899,10 @@ fn plan_google_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
             Ok(PlannedProviderRequest {
                 method: Method::GET,
                 path: format!("/v1/documents/{}", path_segment(&document_id)),
-                query: Vec::new(),
+                query: query_from_operation(
+                    &request.operation,
+                    &["suggestionsViewMode", "includeTabsContent"],
+                )?,
                 body: None,
             })
         }
@@ -786,7 +910,7 @@ fn plan_google_request(request: &CapabilityExecuteRequest) -> Result<PlannedProv
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: format!("/v1/documents/{}:batchUpdate", path_segment(&document_id)),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -812,7 +936,7 @@ fn plan_microsoft_request(request: &CapabilityExecuteRequest) -> Result<PlannedP
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: "/v1.0/me/messages".into(),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -820,7 +944,7 @@ fn plan_microsoft_request(request: &CapabilityExecuteRequest) -> Result<PlannedP
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: "/v1.0/me/sendMail".into(),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -836,7 +960,7 @@ fn plan_microsoft_request(request: &CapabilityExecuteRequest) -> Result<PlannedP
             Ok(PlannedProviderRequest {
                 method: Method::POST,
                 path: "/v1.0/me/events".into(),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -852,7 +976,7 @@ fn plan_microsoft_request(request: &CapabilityExecuteRequest) -> Result<PlannedP
             Ok(PlannedProviderRequest {
                 method: Method::PATCH,
                 path: format!("/v1.0/me/drive/items/{}", path_segment(&item_id)),
-                query: Vec::new(),
+                query: no_operation(&request.operation)?,
                 body: Some(request.payload.clone()),
             })
         }
@@ -863,15 +987,47 @@ fn plan_microsoft_request(request: &CapabilityExecuteRequest) -> Result<PlannedP
     }
 }
 
+struct CapabilityReceiptContext<'a> {
+    profile: &'a ProfileConfig,
+    provider: &'a CapabilityProviderConfig,
+    request: &'a CapabilityExecuteRequest,
+    matched: &'a CapabilityGrantMatch,
+    lease: &'a CapabilityLease,
+    signer: &'a ReceiptSigner,
+}
+
 fn issue_capability_receipt(
-    profile: &ProfileConfig,
-    provider: &CapabilityProviderConfig,
-    request: &CapabilityExecuteRequest,
-    matched: &CapabilityGrantMatch,
-    lease: &CapabilityLease,
+    context: &CapabilityReceiptContext<'_>,
     response: &CapabilityProviderResponse,
-    signer: &ReceiptSigner,
 ) -> Result<Receipt> {
+    let mut result = base_capability_receipt_result(context)?;
+    result.insert("response_status".into(), json!(response.status.as_u16()));
+    issue_capability_receipt_with_result(
+        context,
+        "succeeded",
+        response.provider_request_id.clone(),
+        result,
+    )
+}
+
+fn issue_capability_failure_receipt(
+    context: &CapabilityReceiptContext<'_>,
+    reason: &str,
+) -> Result<Receipt> {
+    let mut result = base_capability_receipt_result(context)?;
+    result.insert("reason".into(), json!(reason));
+    issue_capability_receipt_with_result(context, "ambiguous", None, result)
+}
+
+fn issue_capability_receipt_with_result(
+    context: &CapabilityReceiptContext<'_>,
+    status: &str,
+    provider_request_id: Option<String>,
+    result: BTreeMap<String, Value>,
+) -> Result<Receipt> {
+    let profile = context.profile;
+    let provider = context.provider;
+    let request = context.request;
     let action_request = ActionRequest {
         id: format!("cap_{}", Uuid::new_v4()),
         agent_id: profile_subject(profile),
@@ -885,39 +1041,48 @@ fn issue_capability_receipt(
         requested_at: Some(Utc::now()),
     };
     let execution = ProviderExecution {
-        status: "succeeded".into(),
+        status: status.into(),
         provider: provider.id.clone(),
-        provider_request_id: response.provider_request_id.clone(),
-        result: BTreeMap::from([
-            ("redacted".into(), json!(true)),
-            ("adapter_version".into(), json!(ADAPTER_VERSION)),
-            ("capability".into(), json!(request.capability)),
-            (
-                "provider_kind".into(),
-                json!(provider_kind_name(provider.kind)),
-            ),
-            ("grant_id".into(), json!(matched.grant.id)),
-            ("grant_chain_hash".into(), json!(matched.chain_hash)),
-            ("lease_id".into(), json!(lease.lease_id)),
-            (
-                "credential_ref_hash".into(),
-                json!(lease.credential_ref_hash),
-            ),
-            ("response_status".into(), json!(response.status.as_u16())),
-            (
-                "request_body_hash".into(),
-                payload_hash(&request.payload).map(Value::String)?,
-            ),
-        ]),
+        provider_request_id,
+        result,
     };
-    signer.issue(
+    context.signer.issue(
         profile.id.clone(),
         &action_request,
         action_hash(&action_request)?,
-        capability_policy_hash(profile, provider, matched, lease)?,
+        capability_policy_hash(profile, provider, context.matched, context.lease)?,
         None,
         execution,
     )
+}
+
+fn base_capability_receipt_result(
+    context: &CapabilityReceiptContext<'_>,
+) -> Result<BTreeMap<String, Value>> {
+    let provider = context.provider;
+    let request = context.request;
+    let matched = context.matched;
+    let lease = context.lease;
+    Ok(BTreeMap::from([
+        ("redacted".into(), json!(true)),
+        ("adapter_version".into(), json!(ADAPTER_VERSION)),
+        ("capability".into(), json!(request.capability)),
+        (
+            "provider_kind".into(),
+            json!(provider_kind_name(provider.kind)),
+        ),
+        ("grant_id".into(), json!(matched.grant.id)),
+        ("grant_chain_hash".into(), json!(matched.chain_hash)),
+        ("lease_id".into(), json!(lease.lease_id)),
+        (
+            "credential_ref_hash".into(),
+            json!(lease.credential_ref_hash),
+        ),
+        (
+            "request_body_hash".into(),
+            payload_hash(&request.payload).map(Value::String)?,
+        ),
+    ]))
 }
 
 fn capability_policy_hash(
@@ -938,6 +1103,7 @@ fn capability_policy_hash(
                 "provider": item.provider,
                 "capabilities": item.capabilities,
                 "resources": item.resources,
+                "constraints": item.constraints,
                 "delegation": {
                     "allowed": item.delegation.allowed,
                     "remaining_depth": item.delegation.remaining_depth,
@@ -1131,6 +1297,7 @@ fn query_from_operation(operation: &Value, allowed: &[&str]) -> Result<Vec<(Stri
     let object = operation
         .as_object()
         .ok_or_else(|| AuthorityError::Config("operation must be a JSON object".into()))?;
+    reject_unknown_operation_object_keys(object, allowed)?;
     let mut query = Vec::new();
     for key in allowed {
         if let Some(value) = object.get(*key) {
@@ -1138,6 +1305,35 @@ fn query_from_operation(operation: &Value, allowed: &[&str]) -> Result<Vec<(Stri
         }
     }
     Ok(query)
+}
+
+fn no_operation(operation: &Value) -> Result<Vec<(String, String)>> {
+    reject_unknown_operation_keys(operation, &[])?;
+    Ok(Vec::new())
+}
+
+fn reject_unknown_operation_keys(operation: &Value, allowed: &[&str]) -> Result<()> {
+    if operation.is_null() {
+        return Ok(());
+    }
+    let object = operation
+        .as_object()
+        .ok_or_else(|| AuthorityError::Config("operation must be a JSON object".into()))?;
+    reject_unknown_operation_object_keys(object, allowed)
+}
+
+fn reject_unknown_operation_object_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+) -> Result<()> {
+    for key in object.keys() {
+        if !allowed.iter().any(|allowed| *allowed == key) {
+            return Err(AuthorityError::Config(format!(
+                "operation key {key} is not supported for this capability"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn query_value(value: &Value) -> Result<String> {
@@ -1226,6 +1422,7 @@ mod tests {
             provider: "github".into(),
             capabilities: capabilities.into_iter().map(String::from).collect(),
             resources: resources.into_iter().map(String::from).collect(),
+            constraints: CapabilityGrantConstraints::default(),
             delegation,
         }
     }
@@ -1299,5 +1496,89 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("not valid"));
+    }
+
+    #[test]
+    fn provider_url_preserves_base_path_prefixes() {
+        let base = Url::parse("https://ghe.example.com/api/v3").unwrap();
+        let url = join_provider_url(&base, "/repos/acme/app/issues").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://ghe.example.com/api/v3/repos/acme/app/issues"
+        );
+    }
+
+    #[test]
+    fn default_google_docs_capabilities_use_docs_api_base() {
+        let base = Url::parse("https://www.googleapis.com").unwrap();
+        let url = api_base_for_capability(
+            CapabilityProviderKind::Google,
+            "google.docs.documents.read",
+            &base,
+        )
+        .unwrap();
+        assert_eq!(url.as_str(), "https://docs.googleapis.com/");
+
+        let custom = Url::parse("https://gateway.example.com/google").unwrap();
+        let url = api_base_for_capability(
+            CapabilityProviderKind::Google,
+            "google.docs.documents.read",
+            &custom,
+        )
+        .unwrap();
+        assert_eq!(url.as_str(), "https://gateway.example.com/google");
+    }
+
+    #[test]
+    fn query_operation_rejects_unknown_keys() {
+        let err = query_from_operation(&json!({"statee": "open"}), &["state"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("statee"));
+    }
+
+    #[test]
+    fn capability_constraints_are_checked_and_attenuated() {
+        let mut parent = grant(
+            "github-root",
+            None,
+            "main-agent",
+            vec!["github.issues.create"],
+            vec!["github:acme/app"],
+            capability_delegation(true, 2),
+        );
+        parent
+            .constraints
+            .payload_equals
+            .insert("label".into(), json!("bug"));
+        let mut child = grant(
+            "github-child",
+            Some("github-root"),
+            "worker-agent",
+            vec!["github.issues.create"],
+            vec!["github:acme/app"],
+            capability_delegation(false, 0),
+        );
+        assert!(child_capability_grant_is_subset(&parent, &child).is_err());
+        child
+            .constraints
+            .payload_equals
+            .insert("label".into(), json!("bug"));
+        child_capability_grant_is_subset(&parent, &child).unwrap();
+
+        let request = CapabilityExecuteRequest {
+            profile: "worker-agent".into(),
+            provider: "github".into(),
+            capability: "github.issues.create".into(),
+            resource: "github:acme/app".into(),
+            operation: json!({}),
+            payload: json!({"label": "bug", "title": "issue"}),
+        };
+        assert!(capability_constraints_match(&child.constraints, &request));
+        let request = CapabilityExecuteRequest {
+            payload: json!({"label": "feature", "title": "issue"}),
+            ..request
+        };
+        assert!(!capability_constraints_match(&child.constraints, &request));
     }
 }

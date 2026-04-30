@@ -55,6 +55,9 @@ profiles:
 ```
 
 `env` values are non-secret hints for the child. Secret values are resolved only inside the broker.
+If `scheme` is omitted in hand-written profile or grant config, it defaults to
+`https`. The `add-http` and `create-http` commands remain available for explicit
+plaintext resources.
 
 ## Grants
 

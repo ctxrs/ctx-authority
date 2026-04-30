@@ -15,7 +15,7 @@ The repository includes a local-first `ctxa` broker that lets an agent request f
 - implemented fail-closed approval behavior plus test-only approval providers
 - implemented SQLite audit log
 - implemented receipt signing and verification
-- implemented minimal MCP server for metadata and structural receipt verification
+- implemented minimal MCP server for metadata and receipt verification
 - added closed-system acceptance tests
 - added quickstart docs
 
@@ -30,7 +30,7 @@ The repository includes a local-first `ctxa` broker that lets an agent request f
 - receipts verify offline
 - tampered receipts fail verification
 - the fake secret sentinel does not appear in logs, receipts, stdout, or stderr
-- MCP tests cover implemented metadata and structural receipt verification tools
+- MCP tests cover implemented metadata and receipt verification tools
 
 ## Boundaries
 

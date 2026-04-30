@@ -277,7 +277,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - canonical JSON action hashes
 - Ed25519-signed receipts
 - local receipt list/show/verify workflow
-- structural MCP receipt verification
+- local Ed25519 MCP receipt verification
 - MCP tools for capability grant list/show/delegate and capability execution
 - pluggable secret backend interface
 - `.env`, OS keychain, 1Password CLI, Bitwarden Secrets Manager, Doppler, Infisical, HashiCorp Vault, AWS Secrets Manager, AWS SSM Parameter Store, GCP Secret Manager, Azure Key Vault, SOPS, trusted local command, and test backends
@@ -294,7 +294,7 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 
 ## MCP
 
-`ctxa mcp serve` starts a stdio MCP server for broker metadata, structural
+`ctxa mcp serve` starts a stdio MCP server for broker metadata, local Ed25519
 receipt verification, profile-bound capability grant delegation, and granted
 provider capability execution.
 
@@ -306,7 +306,7 @@ Capability mutation and execution tools require the MCP server process to be
 bound to a profile with `CTXA_PROFILE` or `CTXA_MCP_PROFILE`. When `ctxa` starts
 an agent through `ctxa run`, `CTXA_PROFILE` is provided automatically.
 
-For cryptographic receipt verification, use:
+For file-based receipt verification outside MCP, use:
 
 ```sh
 ctxa receipts verify receipt.json

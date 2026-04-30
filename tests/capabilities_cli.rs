@@ -356,6 +356,249 @@ fn github_app_installation_auth_mints_short_lived_token_before_execution() {
 }
 
 #[test]
+fn provider_api_base_path_prefix_is_preserved() {
+    let server = FakeServer::start(vec![ExpectedRequest {
+        method: "GET",
+        path_and_query: "/api/v3/repos/acme/app/issues?state=open",
+        authorization: "Bearer gh-secret-token",
+        status: "200 OK",
+        body: r#"[{"number":1,"title":"bug"}]"#,
+        request_id: "gh-prefixed-1",
+    }]);
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["profile", "create", "agent", "--agent", "agent"])
+        .assert()
+        .success();
+    set_fake_backend(
+        home.path(),
+        BTreeMap::from([("github-token".into(), "gh-secret-token".into())]),
+    );
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "provider",
+            "add-github",
+            "--id",
+            "github",
+            "--api-base",
+            &format!("{}/api/v3", server.base_url),
+            "--token-ref",
+            "github-token",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "grant",
+            "create",
+            "--id",
+            "github-read",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+        ])
+        .assert()
+        .success();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "execute",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+            "--operation",
+            r#"{"state":"open"}"#,
+        ])
+        .assert()
+        .success();
+    server.join();
+}
+
+#[test]
+fn unknown_operation_keys_fail_closed() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["profile", "create", "agent", "--agent", "agent"])
+        .assert()
+        .success();
+    set_fake_backend(
+        home.path(),
+        BTreeMap::from([("github-token".into(), "gh-secret-token".into())]),
+    );
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "provider",
+            "add-github",
+            "--id",
+            "github",
+            "--api-base",
+            "http://127.0.0.1:9",
+            "--token-ref",
+            "github-token",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "grant",
+            "create",
+            "--id",
+            "github-read",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+        ])
+        .assert()
+        .success();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "execute",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+            "--operation",
+            r#"{"statee":"open"}"#,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "operation key statee is not supported",
+        ))
+        .stderr(predicate::str::contains("gh-secret-token").not())
+        .stderr(predicate::str::contains("github-token").not());
+}
+
+#[test]
+fn oversized_provider_responses_fail_closed() {
+    let oversized_body: &'static str = Box::leak("x".repeat(1024 * 1024 + 1).into_boxed_str());
+    let server = FakeServer::start(vec![ExpectedRequest {
+        method: "GET",
+        path_and_query: "/repos/acme/app/issues",
+        authorization: "Bearer gh-secret-token",
+        status: "200 OK",
+        body: oversized_body,
+        request_id: "gh-large-1",
+    }]);
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .arg("init")
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["profile", "create", "agent", "--agent", "agent"])
+        .assert()
+        .success();
+    set_fake_backend(
+        home.path(),
+        BTreeMap::from([("github-token".into(), "gh-secret-token".into())]),
+    );
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "provider",
+            "add-github",
+            "--id",
+            "github",
+            "--api-base",
+            &server.base_url,
+            "--token-ref",
+            "github-token",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "grant",
+            "create",
+            "--id",
+            "github-read",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+        ])
+        .assert()
+        .success();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "capability",
+            "execute",
+            "--profile",
+            "agent",
+            "--provider",
+            "github",
+            "--capability",
+            "github.issues.read",
+            "--resource",
+            "github:acme/app",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "provider response exceeded size limit",
+        ))
+        .stderr(predicate::str::contains("gh-secret-token").not())
+        .stderr(predicate::str::contains("github-token").not());
+    server.join();
+}
+
+#[test]
 fn google_and_microsoft_capabilities_route_to_provider_apis() {
     let google = FakeServer::start(vec![ExpectedRequest {
         method: "POST",

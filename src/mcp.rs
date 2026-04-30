@@ -10,6 +10,7 @@ use crate::receipts::ReceiptSigner;
 use crate::receipts::{receipt_from_json_str_strict, receipt_from_json_value_strict};
 use crate::{audit::AuditLog, Result};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 
 pub const MCP_SPEC_STATUS: &str = "implemented-minimal-stdio-json-rpc";
@@ -120,8 +121,8 @@ fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "receipts.verify",
-            "title": "Verify Receipt Structure",
-            "description": "Performs structural receipt validation only.",
+            "title": "Verify Local Receipt",
+            "description": "Cryptographically verifies a receipt signed by the local ctx authority key.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -200,6 +201,8 @@ fn tools() -> Vec<Value> {
                     "profile": { "type": "string" },
                     "capabilities": { "type": "array", "items": { "type": "string" } },
                     "resources": { "type": "array", "items": { "type": "string" } },
+                    "operation_equals": { "type": "object" },
+                    "payload_equals": { "type": "object" },
                     "delegable": { "type": "boolean" },
                     "max_depth": { "type": "integer" }
                 },
@@ -281,7 +284,7 @@ fn capabilities_list() -> Value {
             {
                 "name": "receipts.verify",
                 "status": "available",
-                "verification": "structural"
+                "verification": "local-ed25519"
             },
             {
                 "name": "capability.grants.list",
@@ -328,7 +331,7 @@ fn capabilities_list() -> Value {
 }
 
 fn receipts_verify(arguments: &Value) -> Value {
-    match receipt_from_arguments(arguments).and_then(verify_receipt_structure) {
+    match receipt_from_arguments(arguments).and_then(verify_local_receipt) {
         Ok(result) => tool_success(result),
         Err(message) => tool_error(message),
     }
@@ -396,6 +399,8 @@ fn capability_grants_delegate(arguments: &Value) -> std::result::Result<Value, S
     let profile = required_string(arguments, "profile")?;
     let capabilities = required_string_array(arguments, "capabilities")?;
     let resources = required_string_array(arguments, "resources")?;
+    let operation_equals = optional_value_map(arguments, "operation_equals")?;
+    let payload_equals = optional_value_map(arguments, "payload_equals")?;
     let delegable = arguments
         .get("delegable")
         .and_then(Value::as_bool)
@@ -441,6 +446,10 @@ fn capability_grants_delegate(arguments: &Value) -> std::result::Result<Value, S
         provider: parent.provider.clone(),
         capabilities: normalize_capability_list(capabilities),
         resources: normalize_capability_list(resources),
+        constraints: crate::config::CapabilityGrantConstraints {
+            operation_equals,
+            payload_equals,
+        },
         delegation: GrantDelegationConfig {
             allowed: delegable,
             remaining_depth: if delegable { max_depth } else { 0 },
@@ -462,6 +471,7 @@ fn capability_grants_delegate(arguments: &Value) -> std::result::Result<Value, S
                     "provider": child.provider,
                     "capabilities": child.capabilities,
                     "resources": child.resources,
+                    "constraints": child.constraints,
                     "delegation": child.delegation,
                 }),
             )
@@ -551,6 +561,7 @@ fn capability_grant_value_with_chain(grant: &CapabilityGrantConfig, chain: Vec<&
         "provider": grant.provider,
         "capabilities": grant.capabilities,
         "resources": grant.resources,
+        "constraints": grant.constraints,
         "delegation": grant.delegation,
         "chain": chain,
     })
@@ -590,6 +601,25 @@ fn required_string_array(arguments: &Value, key: &str) -> std::result::Result<Ve
     Ok(strings)
 }
 
+fn optional_value_map(
+    arguments: &Value,
+    key: &str,
+) -> std::result::Result<BTreeMap<String, Value>, String> {
+    let Some(value) = arguments.get(key) else {
+        return Ok(BTreeMap::new());
+    };
+    if value.is_null() {
+        return Ok(BTreeMap::new());
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{key} must be an object"))?;
+    Ok(object
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect())
+}
+
 fn redacted_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -608,22 +638,22 @@ fn receipt_from_arguments(arguments: &Value) -> std::result::Result<Receipt, Str
     Err("missing receipt or receipt_json argument".into())
 }
 
-fn verify_receipt_structure(receipt: Receipt) -> std::result::Result<Value, String> {
-    if receipt.signature.alg != "ed25519" {
-        return Err("receipt signature algorithm is not supported".into());
-    }
-    if receipt.signature.sig.trim().is_empty() {
-        return Err("receipt signature is empty".into());
-    }
+fn verify_local_receipt(receipt: Receipt) -> std::result::Result<Value, String> {
+    let paths = AppPaths::discover().map_err(redacted_error)?;
+    let signer = ReceiptSigner::load(&paths).map_err(redacted_error)?;
+    signer
+        .verify_local_receipt(&receipt)
+        .map_err(redacted_error)?;
 
     Ok(json!({
         "valid": true,
-        "mode": "structural",
+        "mode": "local-ed25519",
         "receipt_id": receipt.receipt_id,
         "key_id": receipt.signature.kid,
         "checks": [
             "receipt_json_deserialized",
-            "ed25519_signature_envelope_present"
+            "ed25519_signature_verified",
+            "local_key_id_matched"
         ]
     }))
 }
@@ -677,7 +707,10 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ActionRequest, ProviderExecution};
+    use crate::receipts::{action_hash, payload_hash};
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use std::sync::Mutex;
 
@@ -787,8 +820,42 @@ mod tests {
     }
 
     #[test]
-    fn verifies_structurally_signed_receipt() {
-        let receipt = sample_receipt("ed25519", "not-empty");
+    fn verifies_locally_signed_receipt() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("CTXA_HOME", home.path());
+        }
+        let paths = AppPaths::discover().unwrap();
+        paths.ensure().unwrap();
+        let signer = ReceiptSigner::load_or_create(&paths).unwrap();
+        let request = ActionRequest {
+            id: "mcp-test-action".into(),
+            agent_id: "demo".into(),
+            task_id: None,
+            capability: "fake.action".into(),
+            resource: "fake".into(),
+            operation: json!({}),
+            payload: json!({}),
+            payload_hash: None,
+            idempotency_key: None,
+            requested_at: None,
+        };
+        let receipt = signer
+            .issue(
+                "local".into(),
+                &request,
+                action_hash(&request).unwrap(),
+                payload_hash(&json!({"policy": "test"})).unwrap(),
+                None,
+                ProviderExecution {
+                    status: "succeeded".into(),
+                    provider: "fake".into(),
+                    provider_request_id: None,
+                    result: BTreeMap::from([("redacted".into(), json!(true))]),
+                },
+            )
+            .unwrap();
         let response = handle_message(json!({
             "jsonrpc": "2.0",
             "id": 3,
@@ -806,8 +873,12 @@ mod tests {
         assert_eq!(response["result"]["structuredContent"]["valid"], true);
         assert_eq!(
             response["result"]["structuredContent"]["mode"],
-            "structural"
+            "local-ed25519"
         );
+
+        unsafe {
+            std::env::remove_var("CTXA_HOME");
+        }
     }
 
     #[test]
@@ -1010,6 +1081,7 @@ mod tests {
                     provider: "github".into(),
                     capabilities: vec!["github.issues.read".into()],
                     resources: vec!["github:acme/app".into()],
+                    constraints: Default::default(),
                     delegation: GrantDelegationConfig::default(),
                 },
                 CapabilityGrantConfig {
@@ -1020,6 +1092,7 @@ mod tests {
                     provider: "github".into(),
                     capabilities: vec!["github.issues.read".into()],
                     resources: vec!["github:acme/app".into()],
+                    constraints: Default::default(),
                     delegation: GrantDelegationConfig::default(),
                 },
             ],

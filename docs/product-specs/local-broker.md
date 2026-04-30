@@ -72,7 +72,7 @@ ctxa mcp serve
 
 `policy check` is a diagnostic surface and may take an explicit policy path. `action request` is an execution surface and uses the trusted policy attached to the configured local agent profile; agents cannot supply policy paths at execution time.
 
-The MCP server exposes metadata, structural receipt verification, profile-bound
+The MCP server exposes metadata, local Ed25519 receipt verification, profile-bound
 capability grant delegation, and granted provider capability execution.
 
 ## Offline test scenario

@@ -5,6 +5,7 @@ use crate::policy::is_valid_http_path_prefix;
 use crate::{AuthorityError, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -168,7 +169,18 @@ pub struct CapabilityGrantConfig {
     pub capabilities: Vec<String>,
     pub resources: Vec<String>,
     #[serde(default)]
+    pub constraints: CapabilityGrantConstraints,
+    #[serde(default)]
     pub delegation: GrantDelegationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityGrantConstraints {
+    #[serde(default)]
+    pub operation_equals: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub payload_equals: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -222,7 +234,7 @@ fn default_http_auth_type() -> HttpAuthType {
 }
 
 fn default_http_resource_scheme() -> HttpResourceScheme {
-    HttpResourceScheme::Http
+    HttpResourceScheme::Https
 }
 
 impl AppConfig {
@@ -492,6 +504,7 @@ impl CapabilityGrantConfig {
         for resource in &self.resources {
             validate_resource_name(resource)?;
         }
+        self.constraints.validate(self.id.as_str())?;
         if !self.delegation.allowed && self.delegation.remaining_depth != 0 {
             return Err(AuthorityError::Config(format!(
                 "capability grant {} has remaining_depth without delegation",
@@ -503,6 +516,24 @@ impl CapabilityGrantConfig {
                 "capability grant {} allows delegation but has zero remaining_depth",
                 self.id
             )));
+        }
+        Ok(())
+    }
+}
+
+impl CapabilityGrantConstraints {
+    pub fn validate(&self, grant_id: &str) -> Result<()> {
+        for key in self
+            .operation_equals
+            .keys()
+            .chain(self.payload_equals.keys())
+        {
+            if key.is_empty() || key.len() > 128 || key.bytes().any(|byte| byte.is_ascii_control())
+            {
+                return Err(AuthorityError::Config(format!(
+                    "capability grant {grant_id} has invalid constraint key"
+                )));
+            }
         }
         Ok(())
     }
@@ -752,6 +783,28 @@ profiles:
         assert_eq!(resource.id, "github-issues");
         assert_eq!(resource.scheme, HttpResourceScheme::Https);
         assert_eq!(resource.auth.kind, HttpAuthType::Bearer);
+    }
+
+    #[test]
+    fn handwritten_http_resources_default_to_https() {
+        let config: AppConfig = serde_yaml::from_str(
+            r#"
+profiles:
+  - id: github-reader
+    http_resources:
+      - id: github-issues
+        host: api.github.com
+        secret_ref: github-token
+        allow:
+          methods: [GET]
+          path_prefixes: [/repos/example/repo/issues]
+"#,
+        )
+        .unwrap();
+        config.validate().unwrap();
+
+        let resource = &config.profile("github-reader").unwrap().http_resources[0];
+        assert_eq!(resource.scheme, HttpResourceScheme::Https);
     }
 
     #[test]

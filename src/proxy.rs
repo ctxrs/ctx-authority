@@ -618,6 +618,14 @@ fn execute_proxy_request(
                 }),
             )
         })?;
+    let receipt_context = ProxyReceiptContext {
+        state,
+        authority: &authority,
+        target,
+        method,
+        scheme,
+        body: &request.body,
+    };
 
     let response = forward_request(
         request,
@@ -628,6 +636,7 @@ fn execute_proxy_request(
         &state.config.upstream_root_certs_pem,
     )
     .map_err(|failure| {
+        record_proxy_receipt_best_effort(&receipt_context, None, "ambiguous");
         ProxyFailure::new(
             failure.status,
             &failure.reason,
@@ -646,32 +655,24 @@ fn execute_proxy_request(
         )
     })?;
 
-    let receipt = issue_proxy_receipt(
-        state,
-        &authority,
-        target,
-        method,
-        scheme,
-        &request.body,
-        response.status_code,
-    )
-    .map_err(|_| {
-        ProxyFailure::new(
-            502,
-            "Bad Gateway",
-            "receipt issuance failed",
-            Some("proxy_receipt_failed"),
-            json!({
-                "profile": state.config.profile.id,
-                "resource": resource_id,
-                "method": method,
-                "host": target.canonical_host_port,
-                "path": target.path,
-                "query_present": target.query.is_some(),
-                "scheme": scheme_name(scheme),
-            }),
-        )
-    })?;
+    let receipt = issue_proxy_receipt(&receipt_context, response.status_code, "succeeded")
+        .map_err(|_| {
+            ProxyFailure::new(
+                502,
+                "Bad Gateway",
+                "receipt issuance failed",
+                Some("proxy_receipt_failed"),
+                json!({
+                    "profile": state.config.profile.id,
+                    "resource": resource_id,
+                    "method": method,
+                    "host": target.canonical_host_port,
+                    "path": target.path,
+                    "query_present": target.query.is_some(),
+                    "scheme": scheme_name(scheme),
+                }),
+            )
+        })?;
     let value = serde_json::to_value(&receipt).map_err(|_| {
         ProxyFailure::new(
             502,
@@ -1406,31 +1407,37 @@ fn parse_response_status(response: &[u8]) -> Option<u16> {
     parts.next()?.parse::<u16>().ok()
 }
 
-fn issue_proxy_receipt(
-    state: &ProxyState,
-    authority: &MatchedProxyAuthority<'_>,
-    target: &ProxyTarget,
-    method: &str,
+struct ProxyReceiptContext<'context, 'authority> {
+    state: &'context ProxyState,
+    authority: &'context MatchedProxyAuthority<'authority>,
+    target: &'context ProxyTarget,
+    method: &'context str,
     scheme: HttpResourceScheme,
-    body: &[u8],
+    body: &'context [u8],
+}
+
+fn issue_proxy_receipt(
+    context: &ProxyReceiptContext<'_, '_>,
     status_code: Option<u16>,
+    execution_status: &str,
 ) -> Result<Receipt> {
-    let profile = &state.config.profile;
-    let query_hash = target
+    let profile = &context.state.config.profile;
+    let query_hash = context
+        .target
         .query
         .as_deref()
         .map(|query| payload_hash(&QueryEnvelope { query }))
         .transpose()?;
-    let payload = if body.is_empty() {
+    let payload = if context.body.is_empty() {
         json!({})
     } else {
-        json!({"body_sha256": bytes_hash(body)})
+        json!({"body_sha256": bytes_hash(context.body)})
     };
     let mut operation = serde_json::Map::new();
-    operation.insert("method".into(), json!(method));
-    operation.insert("scheme".into(), json!(scheme_name(scheme)));
-    operation.insert("host".into(), json!(target.canonical_host_port));
-    operation.insert("path".into(), json!(target.path));
+    operation.insert("method".into(), json!(context.method));
+    operation.insert("scheme".into(), json!(scheme_name(context.scheme)));
+    operation.insert("host".into(), json!(context.target.canonical_host_port));
+    operation.insert("path".into(), json!(context.target.path));
     if let Some(query_hash) = &query_hash {
         operation.insert("query_hash".into(), json!(query_hash));
     }
@@ -1439,18 +1446,21 @@ fn issue_proxy_receipt(
         agent_id: profile.agent.clone().unwrap_or_else(|| profile.id.clone()),
         task_id: None,
         capability: "http.request".into(),
-        resource: authority.id().to_string(),
+        resource: context.authority.id().to_string(),
         operation: serde_json::Value::Object(operation),
         payload,
         payload_hash: None,
         idempotency_key: None,
         requested_at: None,
     };
-    let policy_hash = authority_policy_hash(profile, authority)?;
+    let policy_hash = authority_policy_hash(profile, context.authority)?;
     let mut result = BTreeMap::new();
     result.insert("redacted".into(), json!(true));
-    result.insert("query_present".into(), json!(target.query.is_some()));
-    if let MatchedProxyAuthority::Grant(grant) = authority {
+    result.insert(
+        "query_present".into(),
+        json!(context.target.query.is_some()),
+    );
+    if let MatchedProxyAuthority::Grant(grant) = context.authority {
         let chain_ids: Vec<&str> = grant.chain.iter().map(|item| item.id.as_str()).collect();
         result.insert("grant_chain_hash".into(), json!(grant.chain_hash));
         result.insert("grant_chain_ids".into(), json!(chain_ids));
@@ -1459,12 +1469,12 @@ fn issue_proxy_receipt(
         result.insert("status_code".into(), json!(status_code));
     }
     let execution = ProviderExecution {
-        status: "succeeded".into(),
+        status: execution_status.into(),
         provider: "ctxa-http-proxy".into(),
         provider_request_id: Some(format!("proxy_{}", Uuid::new_v4())),
         result,
     };
-    state.config.signer.issue(
+    context.state.config.signer.issue(
         profile.id.clone(),
         &request,
         crate::receipts::action_hash(&request)?,
@@ -1472,6 +1482,24 @@ fn issue_proxy_receipt(
         None,
         execution,
     )
+}
+
+fn record_proxy_receipt_best_effort(
+    context: &ProxyReceiptContext<'_, '_>,
+    status_code: Option<u16>,
+    execution_status: &str,
+) {
+    let Ok(receipt) = issue_proxy_receipt(context, status_code, execution_status) else {
+        return;
+    };
+    let Ok(value) = serde_json::to_value(&receipt) else {
+        return;
+    };
+    let _ = context
+        .state
+        .config
+        .audit
+        .record("proxy_request_receipt", &value);
 }
 
 fn authority_policy_hash(

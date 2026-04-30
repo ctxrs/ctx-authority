@@ -46,10 +46,9 @@ from local broker config. Do not supply your own policy path for execution.
 When connected through MCP, use `capabilities.list` to inspect the currently
 available local tools.
 
-Use `receipts.verify` to check receipt shape through MCP. Pass either a receipt
-object as `receipt` or a JSON string as `receipt_json`. For cryptographic
-receipt verification, use `ctxa receipts verify`; MCP receipt verification
-checks structure only.
+Use `receipts.verify` to verify a locally signed receipt through MCP. Pass
+either a receipt object as `receipt` or a JSON string as `receipt_json`. For
+file-based receipt verification outside MCP, use `ctxa receipts verify`.
 
 MCP capability grant delegation and capability execution are bound to the server
 process profile through `CTXA_PROFILE` or `CTXA_MCP_PROFILE`. Do not request a

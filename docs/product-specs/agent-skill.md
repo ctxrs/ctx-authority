@@ -28,7 +28,7 @@ surface:
 
 - `capabilities.list` lists available MCP tools and broker capabilities.
 - `receipts.verify` accepts either `receipt` as an object or `receipt_json` as a
-  string and performs structural receipt verification.
+  string and verifies the receipt against the local ctx authority signing key.
 
 MCP support is limited to the tools listed above.
 

@@ -7,10 +7,10 @@ use ctxa::capabilities::{
     normalize_capability_list, CapabilityExecuteRequest,
 };
 use ctxa::config::{
-    AgentConfig, AppConfig, AppPaths, CapabilityGrantConfig, CapabilityProviderAuthConfig,
-    CapabilityProviderConfig, CapabilityProviderKind, GrantDelegationConfig, HttpAllowConfig,
-    HttpAuthConfig, HttpGrantConfig, HttpResourceConfig, HttpResourceScheme, PolicyConfig,
-    ProfileConfig,
+    AgentConfig, AppConfig, AppPaths, CapabilityGrantConfig, CapabilityGrantConstraints,
+    CapabilityProviderAuthConfig, CapabilityProviderConfig, CapabilityProviderKind,
+    GrantDelegationConfig, HttpAllowConfig, HttpAuthConfig, HttpGrantConfig, HttpResourceConfig,
+    HttpResourceScheme, PolicyConfig, ProfileConfig,
 };
 use ctxa::execution_context::{load_policy_file, ExecutionContext};
 use ctxa::grants::{child_grant_is_subset, grant_chain, normalize_methods, profile_subject};
@@ -342,22 +342,7 @@ enum CapabilityGrantCommand {
     #[command(about = "Create a root capability grant")]
     Create(CapabilityGrantCreateOptions),
     #[command(about = "Delegate a mechanically narrower capability grant")]
-    Delegate {
-        #[arg(long = "from")]
-        from: String,
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        profile: String,
-        #[arg(long = "capability", required = true)]
-        capabilities: Vec<String>,
-        #[arg(long = "resource", required = true)]
-        resources: Vec<String>,
-        #[arg(long)]
-        delegable: bool,
-        #[arg(long, default_value_t = 0)]
-        max_depth: u8,
-    },
+    Delegate(CapabilityGrantDelegateOptions),
 }
 
 #[derive(Debug, clap::Args)]
@@ -372,6 +357,32 @@ struct CapabilityGrantCreateOptions {
     capabilities: Vec<String>,
     #[arg(long = "resource", required = true)]
     resources: Vec<String>,
+    #[arg(long = "operation-equals")]
+    operation_equals: Vec<String>,
+    #[arg(long = "payload-equals")]
+    payload_equals: Vec<String>,
+    #[arg(long)]
+    delegable: bool,
+    #[arg(long, default_value_t = 0)]
+    max_depth: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct CapabilityGrantDelegateOptions {
+    #[arg(long = "from")]
+    from: String,
+    #[arg(long)]
+    id: String,
+    #[arg(long)]
+    profile: String,
+    #[arg(long = "capability", required = true)]
+    capabilities: Vec<String>,
+    #[arg(long = "resource", required = true)]
+    resources: Vec<String>,
+    #[arg(long = "operation-equals")]
+    operation_equals: Vec<String>,
+    #[arg(long = "payload-equals")]
+    payload_equals: Vec<String>,
     #[arg(long)]
     delegable: bool,
     #[arg(long, default_value_t = 0)]
@@ -898,23 +909,7 @@ fn capability_grant(command: CapabilityGrantCommand) -> anyhow::Result<()> {
         }
         CapabilityGrantCommand::Show { id } => show_capability_grant(id),
         CapabilityGrantCommand::Create(options) => create_root_capability_grant(options),
-        CapabilityGrantCommand::Delegate {
-            from,
-            id,
-            profile,
-            capabilities,
-            resources,
-            delegable,
-            max_depth,
-        } => delegate_capability_grant(
-            from,
-            id,
-            profile,
-            capabilities,
-            resources,
-            delegable,
-            max_depth,
-        ),
+        CapabilityGrantCommand::Delegate(options) => delegate_capability_grant(options),
     }
 }
 
@@ -969,6 +964,7 @@ fn show_capability_grant(id: String) -> anyhow::Result<()> {
             "provider": grant.provider,
             "capabilities": grant.capabilities,
             "resources": grant.resources,
+            "constraints": grant.constraints,
             "delegation": grant.delegation,
             "chain": chain_ids,
         }))?
@@ -1003,6 +999,10 @@ fn create_root_capability_grant(options: CapabilityGrantCreateOptions) -> anyhow
         provider: options.provider,
         capabilities: normalize_capability_list(options.capabilities),
         resources: normalize_capability_list(options.resources),
+        constraints: parse_capability_constraints(
+            options.operation_equals,
+            options.payload_equals,
+        )?,
         delegation: GrantDelegationConfig {
             allowed: options.delegable,
             remaining_depth: if options.delegable {
@@ -1020,45 +1020,45 @@ fn create_root_capability_grant(options: CapabilityGrantCreateOptions) -> anyhow
     Ok(())
 }
 
-fn delegate_capability_grant(
-    from: String,
-    id: String,
-    profile: String,
-    capabilities: Vec<String>,
-    resources: Vec<String>,
-    delegable: bool,
-    max_depth: u8,
-) -> anyhow::Result<()> {
+fn delegate_capability_grant(options: CapabilityGrantDelegateOptions) -> anyhow::Result<()> {
     let paths = AppPaths::discover()?;
     paths.ensure()?;
     let mut config = AppConfig::load(&paths.config_file)?;
-    if config.capability_grant(&id).is_some() {
-        anyhow::bail!("capability grant {id} already exists");
+    if config.capability_grant(&options.id).is_some() {
+        anyhow::bail!("capability grant {} already exists", options.id);
     }
-    if delegable && max_depth == 0 {
+    if options.delegable && options.max_depth == 0 {
         anyhow::bail!("delegable capability grants must specify --max-depth greater than zero");
     }
-    if !delegable && max_depth != 0 {
+    if !options.delegable && options.max_depth != 0 {
         anyhow::bail!("--max-depth requires --delegable");
     }
     let parent = config
-        .capability_grant(&from)
+        .capability_grant(&options.from)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("capability grant {from} is not configured"))?;
+        .ok_or_else(|| anyhow::anyhow!("capability grant {} is not configured", options.from))?;
     let child_profile = config
-        .profile(&profile)
-        .ok_or_else(|| anyhow::anyhow!("profile {profile} is not configured"))?;
+        .profile(&options.profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {} is not configured", options.profile))?;
     let child = CapabilityGrantConfig {
-        id: id.clone(),
+        id: options.id.clone(),
         parent: Some(parent.id.clone()),
-        profile: profile.clone(),
+        profile: options.profile.clone(),
         subject: profile_subject(child_profile),
         provider: parent.provider.clone(),
-        capabilities: normalize_capability_list(capabilities),
-        resources: normalize_capability_list(resources),
+        capabilities: normalize_capability_list(options.capabilities),
+        resources: normalize_capability_list(options.resources),
+        constraints: parse_capability_constraints(
+            options.operation_equals,
+            options.payload_equals,
+        )?,
         delegation: GrantDelegationConfig {
-            allowed: delegable,
-            remaining_depth: if delegable { max_depth } else { 0 },
+            allowed: options.delegable,
+            remaining_depth: if options.delegable {
+                options.max_depth
+            } else {
+                0
+            },
         },
     };
     child_capability_grant_is_subset(&parent, &child)?;
@@ -1066,7 +1066,7 @@ fn delegate_capability_grant(
     config.capability_grants.push(child);
     config.save(&paths.config_file)?;
     AuditLog::open(&paths.audit_db)?.record("capability_grant_delegated", &audit_data)?;
-    println!("capability grant {id}");
+    println!("capability grant {}", options.id);
     Ok(())
 }
 
@@ -1125,8 +1125,35 @@ fn redacted_capability_grant_audit(kind: &str, grant: &CapabilityGrantConfig) ->
         "provider": grant.provider,
         "capabilities": grant.capabilities,
         "resources": grant.resources,
+        "constraints": grant.constraints,
         "delegation": grant.delegation,
     })
+}
+
+fn parse_capability_constraints(
+    operation_equals: Vec<String>,
+    payload_equals: Vec<String>,
+) -> anyhow::Result<CapabilityGrantConstraints> {
+    Ok(CapabilityGrantConstraints {
+        operation_equals: parse_constraint_pairs(operation_equals)?,
+        payload_equals: parse_constraint_pairs(payload_equals)?,
+    })
+}
+
+fn parse_constraint_pairs(pairs: Vec<String>) -> anyhow::Result<BTreeMap<String, Value>> {
+    let mut parsed = BTreeMap::new();
+    for pair in pairs {
+        let (key, raw_value) = pair
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("constraint must use key=value syntax"))?;
+        if key.trim().is_empty() {
+            anyhow::bail!("constraint key must not be empty");
+        }
+        let value = json_value_from_str_no_duplicates(raw_value)
+            .unwrap_or_else(|_| Value::String(raw_value.to_string()));
+        parsed.insert(key.to_string(), value);
+    }
+    Ok(parsed)
 }
 
 fn capability_provider_kind_name(kind: CapabilityProviderKind) -> &'static str {

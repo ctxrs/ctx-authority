@@ -2,6 +2,8 @@ use crate::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,7 @@ impl AuditLog {
             )?;
             Ok(())
         })?;
+        tighten_audit_permissions(&log.path)?;
         Ok(log)
     }
 
@@ -46,14 +49,17 @@ impl AuditLog {
             let mut statement =
                 conn.prepare("SELECT at, kind, data FROM audit_events ORDER BY id DESC LIMIT ?1")?;
             let rows = statement.query_map([limit as i64], |row| {
-                let data: String = row.get(2)?;
-                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
-                Ok((row.get(0)?, row.get(1)?, parsed))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?;
 
             let mut events = Vec::new();
             for row in rows {
-                events.push(row?);
+                let (at, kind, data) = row?;
+                events.push((at, kind, serde_json::from_str(&data)?));
             }
             Ok(events)
         })
@@ -64,14 +70,17 @@ impl AuditLog {
             let mut statement =
                 conn.prepare("SELECT at, kind, data FROM audit_events ORDER BY id DESC")?;
             let rows = statement.query_map([], |row| {
-                let data: String = row.get(2)?;
-                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
-                Ok((row.get(0)?, row.get(1)?, parsed))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?;
 
             let mut events = Vec::new();
             for row in rows {
-                events.push(row?);
+                let (at, kind, data) = row?;
+                events.push((at, kind, serde_json::from_str(&data)?));
             }
             Ok(events)
         })
@@ -83,14 +92,13 @@ impl AuditLog {
                 "SELECT at, data FROM audit_events WHERE kind = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let rows = statement.query_map(params![kind, limit as i64], |row| {
-                let data: String = row.get(1)?;
-                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
-                Ok((row.get(0)?, parsed))
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
 
             let mut events = Vec::new();
             for row in rows {
-                events.push(row?);
+                let (at, data) = row?;
+                events.push((at, serde_json::from_str(&data)?));
             }
             Ok(events)
         })
@@ -101,14 +109,13 @@ impl AuditLog {
             let mut statement =
                 conn.prepare("SELECT at, data FROM audit_events WHERE kind = ?1 ORDER BY id DESC")?;
             let rows = statement.query_map(params![kind], |row| {
-                let data: String = row.get(1)?;
-                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
-                Ok((row.get(0)?, parsed))
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
 
             let mut events = Vec::new();
             for row in rows {
-                events.push(row?);
+                let (at, data) = row?;
+                events.push((at, serde_json::from_str(&data)?));
             }
             Ok(events)
         })
@@ -118,4 +125,21 @@ impl AuditLog {
         let conn = Connection::open(&self.path)?;
         f(&conn)
     }
+}
+
+#[cfg(unix)]
+fn tighten_audit_permissions(path: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(path)?;
+    let mode = metadata.permissions().mode();
+    if mode & 0o077 != 0 {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(mode & !0o077);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn tighten_audit_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }

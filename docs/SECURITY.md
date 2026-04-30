@@ -45,6 +45,14 @@ process-scoped `CONNECT` tunnel created for the launched child process. The
 per-run CA private key remains in memory, and only the CA certificate is exposed
 to the child through temporary trust configuration.
 
+Hand-written profile resources default to HTTPS when the `scheme` field is
+omitted. Use `ctxa profile add-http` or `ctxa grants create-http` only for
+explicit local or plaintext integrations.
+
+The SQLite audit log is local mutable storage. `ctxa` tightens local file
+permissions on Unix and fails on malformed audit JSON, but signed receipts are
+the durable evidence format.
+
 These guarantees are limited to the documented local broker surfaces and do not
 make claims about endpoint hardening, enterprise compliance, or regulated
 workflow readiness.

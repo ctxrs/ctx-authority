@@ -28,15 +28,14 @@ Implemented tools:
 different protocol version fail with a JSON-RPC invalid-params error instead of
 silently negotiating unsupported behavior.
 
-`receipts.verify` performs structural verification only: it checks that the
-receipt parses into the local receipt schema and includes a supported non-empty
-`ed25519` signature envelope. Use `ctxa receipts verify` for cryptographic local
-receipt verification.
+`receipts.verify` performs local cryptographic verification. It parses the
+receipt, loads the local ctx authority signing key, checks the receipt key id,
+and verifies the Ed25519 signature.
 
 ## Supported MCP tools
 
 - `capabilities.list` - implemented
-- `receipts.verify` - implemented with structural verification
+- `receipts.verify` - implemented with local Ed25519 verification
 - `capability.grants.list` - implemented
 - `capability.grants.show` - implemented
 - `capability.grants.delegate` - implemented; mutates local config by creating a narrower child grant from the bound profile's parent grant
@@ -78,14 +77,13 @@ Tool call request:
 The MCP surface supports:
 
 1. list capabilities
-2. verify receipt structure
+2. verify locally signed receipts
 3. list and show provider capability grants
 4. delegate mechanically narrower provider capability grants
 5. execute granted provider capabilities
 
-Approval state, audit search, and cryptographic receipt verification are not
-available over MCP. Capability mutation and execution require the MCP server
-process to be bound to a profile with `CTXA_PROFILE` or `CTXA_MCP_PROFILE`.
-Capability execution is available only for configured local provider adapters
-and local capability grants held by that bound profile. It returns the same
-redacted execution envelope as the CLI.
+Approval state and audit search are not available over MCP. Capability mutation
+and execution require the MCP server process to be bound to a profile with
+`CTXA_PROFILE` or `CTXA_MCP_PROFILE`. Capability execution is available only for
+configured local provider adapters and local capability grants held by that
+bound profile. It returns the same redacted execution envelope as the CLI.
