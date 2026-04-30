@@ -59,12 +59,48 @@ impl AuditLog {
         })
     }
 
+    pub fn list_all(&self) -> Result<Vec<(String, String, Value)>> {
+        self.with_conn(|conn| {
+            let mut statement =
+                conn.prepare("SELECT at, kind, data FROM audit_events ORDER BY id DESC")?;
+            let rows = statement.query_map([], |row| {
+                let data: String = row.get(2)?;
+                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
+                Ok((row.get(0)?, row.get(1)?, parsed))
+            })?;
+
+            let mut events = Vec::new();
+            for row in rows {
+                events.push(row?);
+            }
+            Ok(events)
+        })
+    }
+
     pub fn list_kind(&self, kind: &str, limit: usize) -> Result<Vec<(String, Value)>> {
         self.with_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT at, data FROM audit_events WHERE kind = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let rows = statement.query_map(params![kind, limit as i64], |row| {
+                let data: String = row.get(1)?;
+                let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
+                Ok((row.get(0)?, parsed))
+            })?;
+
+            let mut events = Vec::new();
+            for row in rows {
+                events.push(row?);
+            }
+            Ok(events)
+        })
+    }
+
+    pub fn list_all_kind(&self, kind: &str) -> Result<Vec<(String, Value)>> {
+        self.with_conn(|conn| {
+            let mut statement =
+                conn.prepare("SELECT at, data FROM audit_events WHERE kind = ?1 ORDER BY id DESC")?;
+            let rows = statement.query_map(params![kind], |row| {
                 let data: String = row.get(1)?;
                 let parsed = serde_json::from_str(&data).unwrap_or(Value::Null);
                 Ok((row.get(0)?, parsed))

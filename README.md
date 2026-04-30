@@ -52,15 +52,16 @@ cargo run --bin ctxa -- --help
 
 ## Quickstart
 
-Initialize local state:
+Set up a runtime profile and install the agent instructions:
+
+```sh
+ctxa setup runtime codex --profile github-reader
+```
+
+For a manual setup, initialize local state and create the profile yourself:
 
 ```sh
 ctxa init
-```
-
-Create a run profile:
-
-```sh
 ctxa profile create github-reader --agent my-agent
 ```
 
@@ -103,6 +104,8 @@ If a profile denies an authenticated request, inspect redacted local proposals:
 
 ```sh
 ctxa proposals list
+ctxa proposals show <proposal-id>
+ctxa proposals apply <proposal-id> --secret-ref op://example-vault/github-token/token
 ```
 
 The lower-level action request path is available when an agent or tool submits a
@@ -132,6 +135,13 @@ Inspect the audit log:
 
 ```sh
 ctxa log
+```
+
+Inspect local receipts:
+
+```sh
+ctxa receipts list
+ctxa receipts show <receipt-id>
 ```
 
 ## Concepts
@@ -170,12 +180,14 @@ A signed record of the action, policy hash, payload hash, approval state, and pr
 - run profiles with `ctxa profile create`, `ctxa profile add-http`, `ctxa profile add-https`, and `ctxa run`
 - loopback credential proxy for profile-scoped HTTP and HTTPS requests
 - redacted proposal events for authenticated requests denied by profile policy
+- proposal apply and dismiss workflow for turning denied requests into profile resources
 - local diagnostics with `ctxa doctor`, `ctxa ca status`, and `ctxa profile test`
 - local YAML policies with hash-pinned trust
 - fail-closed approval behavior for approval-required actions
 - SQLite audit log
 - canonical JSON action hashes
 - Ed25519-signed receipts
+- local receipt list/show/verify workflow
 - structural MCP receipt verification
 - pluggable secret backend interface
 - `.env`, OS keychain, 1Password CLI, and test backends

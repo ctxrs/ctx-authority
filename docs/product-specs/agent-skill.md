@@ -14,6 +14,7 @@ The skill teaches:
 - what `ctxa` is
 - when to request a capability
 - how to use profile-provided proxy environment variables
+- how to treat denied requests as proposals instead of asking for raw secrets
 - how to call the CLI
 - how to use the MCP tools
 - how to handle allow, deny, and approval-required responses
@@ -37,5 +38,9 @@ When an agent is started with `ctxa run`, it should use `HTTP_PROXY`,
 `HTTPS_PROXY`, or `CTXA_PROXY_URL` for supported API calls and should not ask
 the human for the backing token. The proxy owns credential injection and
 receipt generation.
+
+If a profile request is denied, the agent should report that a proposal may be
+available through `ctxa proposals list`. The agent must not ask for the raw
+token or bypass the proxy.
 
 The skill itself should stay runtime-agnostic.

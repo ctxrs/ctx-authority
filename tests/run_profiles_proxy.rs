@@ -142,6 +142,69 @@ fn profile_cli_creates_https_resources_and_tests_urls() {
 }
 
 #[test]
+fn setup_runtime_installs_skill_and_preserves_existing_profile() {
+    let home = tempfile::tempdir().unwrap();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["setup", "runtime", "codex", "--profile", "codex"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("profile codex"))
+        .stdout(predicate::str::contains(
+            "next run: ctxa run --profile codex -- codex",
+        ));
+    let skill = std::fs::read_to_string(
+        home.path()
+            .join("skills")
+            .join("ctx-authority")
+            .join("SKILL.md"),
+    )
+    .unwrap();
+    assert!(skill.contains("ctx authority"));
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "profile",
+            "add-https",
+            "codex",
+            "--id",
+            "github-issues",
+            "--host",
+            "api.github.com",
+            "--secret-ref",
+            "op://example-vault/github-token/token",
+            "--allow-method",
+            "GET",
+            "--path-prefix",
+            "/repos/example/repo/issues",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "setup",
+            "runtime",
+            "codex",
+            "--profile",
+            "codex",
+            "--agent",
+            "other-agent",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("agent codex"))
+        .stdout(predicate::str::contains("agent other-agent").not());
+
+    let config = AppConfig::load(&home.path().join("config.yaml")).unwrap();
+    assert_eq!(config.profiles.len(), 1);
+    let profile = config.profile("codex").unwrap();
+    assert_eq!(profile.agent.as_deref(), Some("codex"));
+    assert_eq!(profile.http_resources.len(), 1);
+}
+
+#[test]
 fn run_injects_proxy_environment_without_backend_secret() {
     let home = tempfile::tempdir().unwrap();
     ctxa()
@@ -653,6 +716,240 @@ fn https_denial_records_redacted_proposal_without_secret_resolution() {
 }
 
 #[test]
+fn proposal_apply_enables_denied_https_request_and_receipt_inspection() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = AppPaths::for_home(home.path().to_path_buf());
+    paths.ensure().unwrap();
+    let audit = AuditLog::open(&paths.audit_db).unwrap();
+    let signer = ReceiptSigner::load_or_create(&paths).unwrap();
+    let upstream = spawn_https_upstream();
+    let upstream_address = upstream.address;
+    let upstream_received = Arc::clone(&upstream.received);
+    let initial_profile = https_profile_for(upstream.address, "/safe");
+    AppConfig {
+        profiles: vec![initial_profile.clone()],
+        ..AppConfig::default()
+    }
+    .save(&paths.config_file)
+    .unwrap();
+
+    let resolve_count = Arc::new(AtomicUsize::new(0));
+    let first_proxy = ProxyServer::start(ProxyConfig {
+        profile: initial_profile,
+        secret_backend: Arc::new(CountingBackend {
+            resolve_count: Arc::clone(&resolve_count),
+        }),
+        audit: audit.clone(),
+        signer: signer.clone(),
+        upstream_root_certs_pem: vec![upstream.root_cert_pem.as_bytes().to_vec()],
+    })
+    .unwrap();
+    let client = proxied_https_client(&first_proxy, true);
+    let denied = client
+        .get(format!(
+            "https://{upstream_address}/unsafe/item?api_key=raw-query-value"
+        ))
+        .header("Authorization", "Bearer caller-token")
+        .body("body must not enter proposal")
+        .send()
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+    assert_eq!(resolve_count.load(Ordering::SeqCst), 0);
+    first_proxy.stop();
+
+    let proposals = audit.list_all_kind("proxy_request_proposal").unwrap();
+    assert_eq!(proposals.len(), 1);
+    let proposal = proposals.first().unwrap().1.clone();
+    let proposal_id = proposal["id"].as_str().unwrap().to_string();
+    let proposal_text = serde_json::to_string(&proposal).unwrap();
+    assert!(proposal_text.contains("\"scheme\":\"https\""));
+    assert!(proposal_text.contains("\"path\":\"/unsafe/item\""));
+    assert!(!proposal_text.contains("raw-query-value"));
+    assert!(!proposal_text.contains("caller-token"));
+    assert!(!proposal_text.contains("body must not enter proposal"));
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["proposals", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&proposal_id))
+        .stdout(predicate::str::contains("open"))
+        .stdout(predicate::str::contains("raw-query-value").not());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "proposals",
+            "apply",
+            &proposal_id,
+            "--secret-ref",
+            "github",
+            "--resource-id",
+            "github-unsafe",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("github-unsafe"));
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "proposals",
+            "apply",
+            &proposal_id,
+            "--secret-ref",
+            "github",
+            "--resource-id",
+            "github-unsafe",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already applied"));
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["proposals", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&proposal_id).not());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["proposals", "list", "--all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&proposal_id))
+        .stdout(predicate::str::contains("applied"));
+
+    let updated_config = AppConfig::load(&paths.config_file).unwrap();
+    let updated_profile = updated_config.profile("github-reader").unwrap().clone();
+    assert_eq!(updated_profile.http_resources.len(), 2);
+    let applied_resource = updated_profile
+        .http_resources
+        .iter()
+        .find(|resource| resource.id == "github-unsafe")
+        .unwrap();
+    assert_eq!(applied_resource.scheme, HttpResourceScheme::Https);
+    assert_eq!(applied_resource.host, upstream_address.to_string());
+    assert_eq!(applied_resource.secret_ref, "github");
+    assert_eq!(applied_resource.allow.path_prefixes, vec!["/unsafe/item"]);
+
+    let second_proxy = ProxyServer::start(ProxyConfig {
+        profile: updated_profile,
+        secret_backend: Arc::new(FakeBackend::new(BTreeMap::from([(
+            "github".into(),
+            "https-backend-value".into(),
+        )]))),
+        audit: audit.clone(),
+        signer: signer.clone(),
+        upstream_root_certs_pem: vec![upstream.root_cert_pem.as_bytes().to_vec()],
+    })
+    .unwrap();
+    let client = proxied_https_client(&second_proxy, true);
+    let allowed = client
+        .get(format!(
+            "https://{upstream_address}/unsafe/item?api_key=raw-query-value"
+        ))
+        .send()
+        .unwrap();
+    assert_eq!(allowed.status(), 200);
+    assert_eq!(allowed.text().unwrap(), "ok");
+    second_proxy.stop();
+    upstream.join();
+    let received = upstream_received.lock().unwrap().clone().expect("request");
+    assert_eq!(
+        received.request_line,
+        "GET /unsafe/item?api_key=raw-query-value HTTP/1.1"
+    );
+    assert_eq!(
+        header(&received.headers, "authorization"),
+        Some("Bearer https-backend-value")
+    );
+
+    let receipt_value = audit
+        .list_all_kind("proxy_request_receipt")
+        .unwrap()
+        .first()
+        .unwrap()
+        .1
+        .clone();
+    let receipt: Receipt = serde_json::from_value(receipt_value.clone()).unwrap();
+    signer.verify_local_receipt(&receipt).unwrap();
+    assert_eq!(receipt.resource, "github-unsafe");
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&receipt.receipt_id))
+        .stdout(predicate::str::contains("github-unsafe"));
+    let show_output = ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["receipts", "show", &receipt.receipt_id])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let shown: Receipt = serde_json::from_slice(&show_output).unwrap();
+    signer.verify_local_receipt(&shown).unwrap();
+}
+
+#[test]
+fn proposal_dismiss_hides_open_proposal() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = AppPaths::for_home(home.path().to_path_buf());
+    paths.ensure().unwrap();
+    let audit = AuditLog::open(&paths.audit_db).unwrap();
+    audit
+        .record(
+            "proxy_request_proposal",
+            &serde_json::json!({
+                "id": "prop_dismiss_me",
+                "profile": "demo",
+                "agent": "demo",
+                "capability": "http.request",
+                "scheme": "https",
+                "method": "GET",
+                "host": "api.example.com:443",
+                "path": "/safe",
+                "query_present": false,
+                "reason": "no_matching_resource",
+            }),
+        )
+        .unwrap();
+
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args([
+            "proposals",
+            "dismiss",
+            "prop_dismiss_me",
+            "--reason",
+            "not needed\nwith newline",
+        ])
+        .assert()
+        .success();
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["proposals", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("prop_dismiss_me").not());
+    ctxa()
+        .env("CTXA_HOME", home.path())
+        .args(["proposals", "show", "prop_dismiss_me"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\": \"dismissed\""));
+    let dismiss_event = audit
+        .list_all_kind("proxy_request_proposal_dismissed")
+        .unwrap()
+        .first()
+        .unwrap()
+        .1
+        .clone();
+    assert_eq!(dismiss_event["reason"], "not needed with newline");
+}
+
+#[test]
 fn proxy_rejects_header_unsafe_bearer_secrets() {
     let home = tempfile::tempdir().unwrap();
     let paths = AppPaths::for_home(home.path().to_path_buf());
@@ -702,7 +999,7 @@ fn proxy_denies_before_secret_resolution() {
     let proxy = ProxyServer::start(ProxyConfig {
         profile,
         secret_backend: backend,
-        audit,
+        audit: audit.clone(),
         signer,
         upstream_root_certs_pem: Vec::new(),
     })
@@ -731,6 +1028,9 @@ fn proxy_denies_before_secret_resolution() {
         ),
     );
     assert!(bad_path.starts_with("HTTP/1.1 403"), "{bad_path}");
+    let proposals = audit.list_all_kind("proxy_request_proposal").unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].1["path"], "/unsafe");
 
     let encoded_slash = send_proxy_request(
         proxy.address(),
@@ -766,6 +1066,10 @@ fn proxy_denies_before_secret_resolution() {
         "{smuggled_header}"
     );
     assert_eq!(resolve_count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        audit.list_all_kind("proxy_request_proposal").unwrap().len(),
+        2
+    );
 
     proxy.stop();
 }

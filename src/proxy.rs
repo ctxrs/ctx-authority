@@ -506,7 +506,7 @@ fn execute_proxy_request(
         method,
         &target.path,
     ) else {
-        record_proxy_proposal(state, method, target, "no_matching_resource");
+        record_proxy_proposal(state, method, scheme, target, "no_matching_resource");
         return Err(ProxyFailure::new(
             403,
             "Forbidden",
@@ -1377,7 +1377,13 @@ fn profile_policy_hash(profile: &ProfileConfig, resource: &HttpResourceConfig) -
     })
 }
 
-fn record_proxy_proposal(state: &ProxyState, method: &str, target: &ProxyTarget, reason: &str) {
+fn record_proxy_proposal(
+    state: &ProxyState,
+    method: &str,
+    scheme: HttpResourceScheme,
+    target: &ProxyTarget,
+    reason: &str,
+) {
     let _ = state.config.audit.record(
         "proxy_request_proposal",
         &json!({
@@ -1385,6 +1391,7 @@ fn record_proxy_proposal(state: &ProxyState, method: &str, target: &ProxyTarget,
             "profile": state.config.profile.id,
             "agent": state.config.profile.agent.as_deref().unwrap_or(&state.config.profile.id),
             "capability": "http.request",
+            "scheme": scheme_name(scheme),
             "method": method,
             "host": target.canonical_host_port,
             "path": target.path,

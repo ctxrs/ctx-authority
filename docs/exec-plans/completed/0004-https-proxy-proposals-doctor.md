@@ -90,7 +90,7 @@ denied, and does not resolve secrets or call the upstream API.
 
 ## Design constraints
 
-- No hosted service dependency.
+- No network service dependency.
 - No global CA installation.
 - No raw secret values in stdout, stderr, audit events, receipts, proposals, or
   docs.

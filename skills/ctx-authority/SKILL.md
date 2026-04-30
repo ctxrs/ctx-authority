@@ -17,9 +17,12 @@ ctxa run --profile <profile-id> -- <agent-or-tool-command>
 ctxa profile test <profile-id> --url <url> [--method <METHOD>]
 ctxa doctor --profile <profile-id>
 ctxa proposals list
+ctxa proposals show <proposal-id>
 ctxa action request --file <action.json>
 ctxa policy check --policy <policy.yaml> --file <action.json>
 ctxa log
+ctxa receipts list
+ctxa receipts show <receipt-id>
 ctxa receipts verify <receipt.json>
 ctxa mcp serve
 ```
@@ -47,6 +50,10 @@ If `ctxa` allows the action, continue with the result.
 
 If `ctxa` denies the action, stop and report the denial reason. Do not retry by
 asking for raw credentials.
+
+If a `ctxa run` API request is denied, tell the human that they can inspect
+redacted proposals with `ctxa proposals list`. Do not ask for the backing token
+or attempt the request outside the proxy.
 
 If `ctxa` says approval is required, wait for approval or tell the human what
 approval is needed. Do not change the payload after approval. A changed payload

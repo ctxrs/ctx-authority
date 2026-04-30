@@ -127,7 +127,18 @@ or caller auth headers.
 
 ```bash
 ctxa proposals list
+ctxa proposals show <proposal-id>
+ctxa proposals apply <proposal-id> --secret-ref <ref>
+ctxa proposals dismiss <proposal-id>
 ```
+
+Proposal application creates a new profile resource by default. It requires a
+human-supplied `--secret-ref`, never resolves that reference, and fails on
+resource-id collision unless `--replace` is explicit. Applied and dismissed
+proposals are hidden from default `list` output and visible with `--all`.
+
+The default applied path prefix is the proposed path. Path-prefix matching uses
+the same segment-boundary rules as manually configured profile resources.
 
 ## Header handling
 

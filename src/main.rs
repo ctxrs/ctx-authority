@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use ctxa::audit::AuditLog;
 use ctxa::boundary::action_request_from_json_str;
 use ctxa::config::{
@@ -7,14 +7,19 @@ use ctxa::config::{
     HttpResourceScheme, PolicyConfig, ProfileConfig,
 };
 use ctxa::execution_context::{load_policy_file, ExecutionContext};
-use ctxa::models::ActionRequest;
+use ctxa::models::{ActionRequest, Receipt};
 use ctxa::policy::PolicyDocument;
 use ctxa::proxy::{can_create_process_ca_file, profile_allows_url, ProxyConfig, ProxyServer};
 use ctxa::receipts::{receipt_from_json_str_strict, ReceiptSigner};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
+
+const CTX_AUTHORITY_SKILL: &str = include_str!("../skills/ctx-authority/SKILL.md");
+const DISMISS_REASON_MAX_CHARS: usize = 200;
 
 #[derive(Debug, Parser)]
 #[command(name = "ctxa", about = "Local capability broker for agents")]
@@ -37,6 +42,10 @@ enum Command {
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
+    },
+    Setup {
+        #[command(subcommand)]
+        command: SetupCommand,
     },
     Proposals {
         #[command(subcommand)]
@@ -154,7 +163,70 @@ enum ProposalCommand {
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long)]
+        all: bool,
     },
+    Show {
+        id: String,
+    },
+    Apply {
+        id: String,
+        #[arg(long)]
+        secret_ref: String,
+        #[arg(long)]
+        resource_id: Option<String>,
+        #[arg(long)]
+        path_prefix: Option<String>,
+        #[arg(long = "allow-method")]
+        allow_methods: Vec<String>,
+        #[arg(long)]
+        replace: bool,
+    },
+    Dismiss {
+        id: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SetupCommand {
+    Runtime {
+        runtime: AgentRuntime,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum AgentRuntime {
+    Codex,
+    ClaudeCode,
+    Openclaw,
+    Generic,
+}
+
+impl AgentRuntime {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude",
+            Self::Openclaw => "openclaw",
+            Self::Generic => "agent-command",
+        }
+    }
+
+    fn agent_id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude-code",
+            Self::Openclaw => "openclaw",
+            Self::Generic => "agent",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -164,7 +236,16 @@ enum CaCommand {
 
 #[derive(Debug, Subcommand)]
 enum ReceiptCommand {
-    Verify { file: PathBuf },
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    Show {
+        id: String,
+    },
+    Verify {
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -179,6 +260,7 @@ fn main() -> anyhow::Result<()> {
         Command::Agent { command } => agent(command),
         Command::Policy { command } => policy(command),
         Command::Profile { command } => profile(command),
+        Command::Setup { command } => setup(command),
         Command::Proposals { command } => proposals(command),
         Command::Ca { command } => ca(command),
         Command::Doctor { profile } => doctor(profile),
@@ -395,17 +477,347 @@ fn doctor(profile: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn setup(command: SetupCommand) -> anyhow::Result<()> {
+    match command {
+        SetupCommand::Runtime {
+            runtime,
+            profile,
+            agent,
+        } => setup_runtime(runtime, profile, agent),
+    }
+}
+
+fn setup_runtime(
+    runtime: AgentRuntime,
+    profile_id: String,
+    agent: Option<String>,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    if !paths.config_file.exists() {
+        AppConfig::default().save(&paths.config_file)?;
+    }
+    AuditLog::open(&paths.audit_db)?;
+    ReceiptSigner::load_or_create(&paths)?;
+
+    let mut config = AppConfig::load(&paths.config_file)?;
+    let requested_agent_id = agent.unwrap_or_else(|| runtime.agent_id().to_string());
+    let effective_agent_id;
+    if let Some(profile) = config.profile_mut(&profile_id) {
+        if profile.agent.is_none() {
+            profile.agent = Some(requested_agent_id.clone());
+        }
+        effective_agent_id = profile
+            .agent
+            .clone()
+            .unwrap_or_else(|| requested_agent_id.clone());
+    } else {
+        config.profiles.push(ProfileConfig {
+            id: profile_id.clone(),
+            agent: Some(requested_agent_id.clone()),
+            env_vars: Default::default(),
+            http_resources: Vec::new(),
+        });
+        effective_agent_id = requested_agent_id;
+    }
+    config.save(&paths.config_file)?;
+
+    let skill_dir = paths.home.join("skills").join("ctx-authority");
+    fs::create_dir_all(&skill_dir)?;
+    let skill_path = skill_dir.join("SKILL.md");
+    fs::write(&skill_path, CTX_AUTHORITY_SKILL)?;
+
+    can_create_process_ca_file()?;
+    println!("profile {profile_id}");
+    println!("agent {effective_agent_id}");
+    println!("skill {}", skill_path.display());
+    println!("doctor ok");
+    println!(
+        "next add resource: ctxa profile add-https {profile_id} --id <resource-id> --host <host> --secret-ref <ref> --allow-method GET --path-prefix <path>"
+    );
+    println!(
+        "next run: ctxa run --profile {profile_id} -- {}",
+        runtime.command()
+    );
+    println!("next proposals: ctxa proposals list");
+    println!("next receipts: ctxa receipts list");
+    Ok(())
+}
+
 fn proposals(command: ProposalCommand) -> anyhow::Result<()> {
     match command {
-        ProposalCommand::List { limit } => {
+        ProposalCommand::List { limit, all } => {
             let paths = AppPaths::discover()?;
             let audit = AuditLog::open(&paths.audit_db)?;
-            for (at, data) in audit.list_kind("proxy_request_proposal", limit)? {
-                println!("{at} {}", serde_json::to_string(&data)?);
+            let mut printed = 0usize;
+            for record in proposal_records(&audit)? {
+                if !all && record.status != ProposalStatus::Open {
+                    continue;
+                }
+                println!(
+                    "{} {} {}",
+                    record.at,
+                    record.status.as_str(),
+                    serde_json::to_string(&record.data)?
+                );
+                printed += 1;
+                if printed >= limit {
+                    break;
+                }
             }
             Ok(())
         }
+        ProposalCommand::Show { id } => {
+            let paths = AppPaths::discover()?;
+            let audit = AuditLog::open(&paths.audit_db)?;
+            let record = find_proposal_record(&audit, &id)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "status": record.status.as_str(),
+                    "proposal": record.data,
+                }))?
+            );
+            Ok(())
+        }
+        ProposalCommand::Apply {
+            id,
+            secret_ref,
+            resource_id,
+            path_prefix,
+            allow_methods,
+            replace,
+        } => apply_proposal(
+            id,
+            secret_ref,
+            resource_id,
+            path_prefix,
+            allow_methods,
+            replace,
+        ),
+        ProposalCommand::Dismiss { id, reason } => dismiss_proposal(id, reason),
     }
+}
+
+fn apply_proposal(
+    id: String,
+    secret_ref: String,
+    resource_id: Option<String>,
+    path_prefix: Option<String>,
+    allow_methods: Vec<String>,
+    replace: bool,
+) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    paths.ensure()?;
+    let audit = AuditLog::open(&paths.audit_db)?;
+    let record = find_proposal_record(&audit, &id)?;
+    match record.status {
+        ProposalStatus::Applied => {
+            println!("proposal {id} already applied");
+            return Ok(());
+        }
+        ProposalStatus::Dismissed => anyhow::bail!("proposal {id} is dismissed"),
+        ProposalStatus::Open => {}
+    }
+    let proposal = ProposalData::from_value(&record.data)?;
+    let mut config = AppConfig::load(&paths.config_file)?;
+    let profile = config
+        .profile_mut(&proposal.profile)
+        .ok_or_else(|| anyhow::anyhow!("profile {} is not configured", proposal.profile))?;
+    let resource_id = resource_id.unwrap_or_else(|| default_resource_id(&proposal.id));
+    let methods = if allow_methods.is_empty() {
+        vec![proposal.method.clone()]
+    } else {
+        allow_methods
+            .into_iter()
+            .map(|method| method.to_ascii_uppercase())
+            .collect()
+    };
+    let path_prefix = path_prefix.unwrap_or_else(|| proposal.path.clone());
+    let resource = HttpResourceConfig {
+        id: resource_id.clone(),
+        scheme: proposal.scheme,
+        host: proposal.host.clone(),
+        secret_ref,
+        auth: HttpAuthConfig::default(),
+        allow: HttpAllowConfig {
+            methods,
+            path_prefixes: vec![path_prefix],
+        },
+    };
+
+    if let Some(existing) = profile
+        .http_resources
+        .iter_mut()
+        .find(|resource| resource.id == resource_id)
+    {
+        if !replace {
+            anyhow::bail!("resource {resource_id} already exists; pass --replace to overwrite it");
+        }
+        *existing = resource;
+    } else {
+        profile.http_resources.push(resource);
+    }
+    config.save(&paths.config_file)?;
+    audit.record(
+        "proxy_request_proposal_applied",
+        &json!({
+            "id": proposal.id,
+            "profile": proposal.profile,
+            "resource": resource_id,
+            "replace": replace,
+        }),
+    )?;
+    println!("applied proposal {id} as resource {resource_id}");
+    Ok(())
+}
+
+fn dismiss_proposal(id: String, reason: Option<String>) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()?;
+    let audit = AuditLog::open(&paths.audit_db)?;
+    let record = find_proposal_record(&audit, &id)?;
+    match record.status {
+        ProposalStatus::Dismissed => {
+            println!("proposal {id} already dismissed");
+            return Ok(());
+        }
+        ProposalStatus::Applied => anyhow::bail!("proposal {id} is already applied"),
+        ProposalStatus::Open => {}
+    }
+    let mut data = json!({ "id": id });
+    if let Some(reason) = reason {
+        data["reason"] = json!(sanitize_dismiss_reason(&reason));
+    }
+    audit.record("proxy_request_proposal_dismissed", &data)?;
+    println!("dismissed proposal {}", data["id"].as_str().unwrap_or(""));
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ProposalRecord {
+    at: String,
+    data: Value,
+    status: ProposalStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProposalStatus {
+    Open,
+    Applied,
+    Dismissed,
+}
+
+impl ProposalStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Applied => "applied",
+            Self::Dismissed => "dismissed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProposalData {
+    id: String,
+    profile: String,
+    scheme: HttpResourceScheme,
+    method: String,
+    host: String,
+    path: String,
+}
+
+impl ProposalData {
+    fn from_value(value: &Value) -> anyhow::Result<Self> {
+        let id = required_string(value, "id")?;
+        let profile = required_string(value, "profile")?;
+        let scheme = match required_string(value, "scheme")?.as_str() {
+            "http" => HttpResourceScheme::Http,
+            "https" => HttpResourceScheme::Https,
+            other => anyhow::bail!("proposal {id} has unsupported scheme {other}"),
+        };
+        let method = required_string(value, "method")?.to_ascii_uppercase();
+        if method == "CONNECT" {
+            anyhow::bail!("proposal {id} cannot apply CONNECT as an allowed method");
+        }
+        let host = required_string(value, "host")?;
+        let path = required_string(value, "path")?;
+        Ok(Self {
+            id,
+            profile,
+            scheme,
+            method,
+            host,
+            path,
+        })
+    }
+}
+
+fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("proposal is missing {key}"))
+}
+
+fn proposal_records(audit: &AuditLog) -> anyhow::Result<Vec<ProposalRecord>> {
+    let events = audit.list_all()?;
+    let mut statuses = BTreeMap::new();
+    for (_, kind, data) in &events {
+        let status = match kind.as_str() {
+            "proxy_request_proposal_applied" => ProposalStatus::Applied,
+            "proxy_request_proposal_dismissed" => ProposalStatus::Dismissed,
+            _ => continue,
+        };
+        if let Some(id) = data.get("id").and_then(Value::as_str) {
+            statuses.entry(id.to_string()).or_insert(status);
+        }
+    }
+
+    let records = events
+        .into_iter()
+        .filter_map(|(at, kind, data)| {
+            if kind != "proxy_request_proposal" {
+                return None;
+            }
+            let id = data.get("id")?.as_str()?.to_string();
+            let status = statuses.get(&id).copied().unwrap_or(ProposalStatus::Open);
+            Some(ProposalRecord { at, data, status })
+        })
+        .collect();
+    Ok(records)
+}
+
+fn find_proposal_record(audit: &AuditLog, id: &str) -> anyhow::Result<ProposalRecord> {
+    proposal_records(audit)?
+        .into_iter()
+        .find(|record| record.data.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| anyhow::anyhow!("proposal {id} not found"))
+}
+
+fn default_resource_id(proposal_id: &str) -> String {
+    let suffix: String = proposal_id
+        .trim_start_matches("prop_")
+        .chars()
+        .filter(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.'))
+        .take(16)
+        .collect();
+    if suffix.is_empty() {
+        "proposal-resource".into()
+    } else {
+        format!("proposal-{suffix}")
+    }
+}
+
+fn sanitize_dismiss_reason(reason: &str) -> String {
+    reason
+        .chars()
+        .map(|char| if char.is_control() { ' ' } else { char })
+        .take(DISMISS_REASON_MAX_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn ca(command: CaCommand) -> anyhow::Result<()> {
@@ -518,6 +930,32 @@ fn action(command: ActionCommand) -> anyhow::Result<()> {
 
 fn receipts(command: ReceiptCommand) -> anyhow::Result<()> {
     match command {
+        ReceiptCommand::List { limit } => {
+            let paths = AppPaths::discover()?;
+            let audit = AuditLog::open(&paths.audit_db)?;
+            for (_, receipt, _) in receipt_records(&audit)?.into_iter().take(limit) {
+                println!(
+                    "{} {} {} {} {} {}",
+                    receipt.issued_at.to_rfc3339(),
+                    receipt.receipt_id,
+                    receipt.action,
+                    receipt.resource,
+                    receipt.agent,
+                    receipt.execution.status,
+                );
+            }
+            Ok(())
+        }
+        ReceiptCommand::Show { id } => {
+            let paths = AppPaths::discover()?;
+            let audit = AuditLog::open(&paths.audit_db)?;
+            let (_, _, value) = receipt_records(&audit)?
+                .into_iter()
+                .find(|(_, receipt, _)| receipt.receipt_id == id)
+                .ok_or_else(|| anyhow::anyhow!("receipt {id} not found"))?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
+        }
         ReceiptCommand::Verify { file } => {
             let paths = AppPaths::discover()?;
             let text = fs::read_to_string(file)?;
@@ -528,6 +966,19 @@ fn receipts(command: ReceiptCommand) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+fn receipt_records(audit: &AuditLog) -> anyhow::Result<Vec<(String, Receipt, Value)>> {
+    let mut receipts = Vec::new();
+    for (at, kind, data) in audit.list_all()? {
+        if !matches!(kind.as_str(), "action_executed" | "proxy_request_receipt") {
+            continue;
+        }
+        if let Ok(receipt) = serde_json::from_value::<Receipt>(data.clone()) {
+            receipts.push((at, receipt, data));
+        }
+    }
+    Ok(receipts)
 }
 
 fn log(limit: usize) -> anyhow::Result<()> {

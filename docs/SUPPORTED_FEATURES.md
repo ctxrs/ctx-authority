@@ -13,11 +13,11 @@ repository.
 | Policy engine | Implemented | YAML allow/deny/approval decisions use strict field and version validation. |
 | Secret backends | Implemented | Fake, `.env`, OS keychain abstraction, and 1Password adapter are implemented. |
 | Provider adapters | Implemented | Fake provider adapter and profile proxy execution path are implemented. |
-| Proposals | Implemented | Authenticated profile-proxy denials record redacted local proposal events. |
+| Proposals | Implemented | Authenticated profile-proxy denials record redacted local proposal events that can be shown, applied, or dismissed. |
 | Diagnostics | Implemented | `ctxa doctor`, `ctxa ca status`, and `ctxa profile test` are implemented. |
 | Approvals | Limited | Approval-required actions fail closed unless an approval provider is configured. |
 | Audit log | Implemented | SQLite audit covers decisions, attempts, successes, and failures. |
-| Receipts | Implemented | Canonical JSON plus Ed25519 signing and local verification are implemented. |
+| Receipts | Implemented | Canonical JSON plus Ed25519 signing, local list/show, and local verification are implemented. |
 
 ## Test gates
 

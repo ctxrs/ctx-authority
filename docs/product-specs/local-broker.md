@@ -43,11 +43,14 @@ ctxa profile test github-reader --url https://api.github.com/repos/example/repo/
 ctxa doctor --profile github-reader
 ctxa run --profile github-reader -- my-agent
 ctxa proposals list
+ctxa proposals apply <proposal-id> --secret-ref op://example-vault/github-token/token
 ctxa policy trust --id default --path policy.yaml
 ctxa agent create demo --policy default
 ctxa policy check --policy policy.yaml --file action.json
 ctxa action request --file action.json
 ctxa log
+ctxa receipts list
+ctxa receipts show <receipt-id>
 ctxa receipts verify receipt.json
 ctxa mcp serve
 ```
@@ -71,6 +74,7 @@ The repository includes a deterministic offline scenario:
 - the local proxy requires per-run proxy auth before resolving secrets
 - the local proxy injects broker-managed bearer auth for allowed HTTP and HTTPS requests
 - authenticated profile-proxy denials create redacted local proposal events
+- proposal application can turn a redacted denied request into a profile resource
 - proxy receipts verify offline
 - tampered receipts fail verification
 - the fake secret sentinel does not appear in logs, receipts, stdout, stderr, or generated local state

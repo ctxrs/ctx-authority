@@ -5,6 +5,7 @@ COMMON_TEST_DATA = [
     "Cargo.toml",
     "scripts/bazel/env.sh",
 ] + glob([
+    "skills/**",
     "src/**",
     "tests/**",
 ])
@@ -39,7 +40,7 @@ shell_test(
     src = "scripts/bazel/cargo_test.sh",
     data = COMMON_TEST_DATA,
     size = "medium",
-    timeout = "moderate",
+    timeout = "long",
 )
 
 shell_test(

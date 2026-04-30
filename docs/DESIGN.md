@@ -15,14 +15,19 @@ The command surface should be short and memorable:
 
 ```bash
 ctxa init
+ctxa setup runtime codex --profile github-reader
 ctxa profile create github-reader --agent my-agent
 ctxa profile add-https github-reader --id github-issues --host api.github.com --secret-ref op://example-vault/github-token/token --allow-method GET --path-prefix /repos/example/repo/issues
 ctxa profile test github-reader --url https://api.github.com/repos/example/repo/issues
 ctxa run --profile github-reader -- my-agent
+ctxa proposals list
+ctxa proposals apply <proposal-id> --secret-ref op://example-vault/github-token/token
 ctxa agent create personal
 ctxa policy trust --id personal --path policy.yaml
 ctxa action request --file action.json
 ctxa log
+ctxa receipts list
+ctxa receipts show <receipt-id>
 ctxa receipts verify receipt.json
 ctxa mcp serve
 ```
