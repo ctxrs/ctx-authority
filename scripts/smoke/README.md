@@ -39,9 +39,12 @@ Keychain:
 
 ```sh
 CTXA_SMOKE_BACKEND=onepassword \
-CTXA_SMOKE_GITHUB_TOKEN_REF='op://Private/ctxa-smoke-github-pat/credential' \
+CTXA_SMOKE_GITHUB_TOKEN_REF='op://Personal/ctxa-smoke-github-pat/password' \
 scripts/smoke/real_provider_smoke.sh
 ```
+
+Use the vault and field name from the actual 1Password item. A standard
+1Password Password item is usually addressable through the `password` field.
 
 ## Options
 
